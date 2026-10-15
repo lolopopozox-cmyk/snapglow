@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+Disallow: /admin-sec-portal-x92a
+Disallow: /api/
+
+Sitemap: https://snapglow.vercel.app/sitemap.xml

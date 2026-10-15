@@ -1,0 +1,19 @@
+{
+  "name": "snapglow",
+  "version": "1.0.0",
+  "description": "SnapGlow - Elevate Your Snap Presence. AI-powered Snapchat profile tools & uncensored image generation.",
+  "main": "index.html",
+  "scripts": {
+    "dev": "vercel dev",
+    "deploy": "vercel --prod"
+  },
+  "dependencies": {
+    "lowdb": "^5.1.0"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": ["snapchat", "ai", "image-generation", "uncensored"],
+  "author": "SnapGlow",
+  "license": "UNLICENSED"
+}

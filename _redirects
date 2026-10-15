@@ -1,0 +1,3 @@
+# Vercel SPA Redirects - all non-API routes go to index.html
+/*    /index.html   200
+/api/*    /api/:splat   200

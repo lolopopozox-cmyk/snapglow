@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="Contact SnapGlow - Get in touch for support, feedback, or inquiries.">
+<title>Contact - SnapGlow</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='48' fill='%23FFFC00'/><text x='50' y='68' text-anchor='middle' font-size='36' font-weight='900' font-family='Impact' fill='%23000'>SG</text></svg>">
+<script src="/ads.js" defer></script>
+</head>
+<body>
+<nav class="nav"></nav>
+<section style="padding:120px 20px 40px"><div class="container" style="max-width:600px">
+<h1 style="text-align:center;font-size:2.5rem;margin-bottom:10px"><span class="yellow">Contact</span> Us</h1>
+<p style="text-align:center;color:var(--txt-dim);margin-bottom:30px">Have questions? Send us a message.</p>
+<div class="glass">
+<div class="frm"><label>Name</label><input type="text" id="contactName" class="input" placeholder="Your name"></div>
+<div class="frm"><label>Email</label><input type="email" id="contactEmail" class="input" placeholder="your@email.com"></div>
+<div class="frm"><label>Message</label><textarea id="contactMsg" class="input" placeholder="Write your message..." rows="4"></textarea></div>
+<button id="sendMsg" class="btn btn-fill btn-lg" style="width:100%">Send Message</button>
+<div id="msgStatus" style="margin-top:16px;text-align:center"></div>
+</div>
+<p style="text-align:center;margin-top:20px;color:var(--txt-dim)">Or email us directly: <a href="mailto:mranonymous.efx@gmail.com">mranonymous.efx@gmail.com</a></p>
+</div></section>
+<footer class="footer"></footer>
+<script src="/script.js"></script>
+<script>
+document.getElementById('sendMsg').addEventListener('click', function() {
+  var name = document.getElementById('contactName').value.trim();
+  var email = document.getElementById('contactEmail').value.trim();
+  var msg = document.getElementById('contactMsg').value.trim();
+  if (!name || !email || !msg) { SG.toast('Please fill all fields'); return; }
+  var btn = document.getElementById('sendMsg'); btn.disabled = true; btn.textContent = 'Sending...';
+  fetch('/api/contact', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name: name, email: email, message: msg}) })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    btn.disabled = false; btn.textContent = 'Send Message';
+    document.getElementById('msgStatus').innerHTML = '<p style="color:var(--success)">Message sent! We will get back to you soon.</p>';
+    document.getElementById('contactName').value = ''; document.getElementById('contactEmail').value = ''; document.getElementById('contactMsg').value = '';
+  })
+  .catch(function() {
+    btn.disabled = false; btn.textContent = 'Send Message';
+    document.getElementById('msgStatus').innerHTML = '<p style="color:var(--danger)">Failed to send. Please try emailing us directly.</p>';
+  });
+});
+</script>
+</body>
+</html>

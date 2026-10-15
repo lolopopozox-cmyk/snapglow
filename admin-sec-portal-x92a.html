@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex,nofollow">
+<title>Admin - SnapGlow</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<nav class="nav"></nav>
+<section style="padding:120px 20px 40px"><div class="container" style="max-width:700px">
+
+<!-- Login Screen -->
+<div id="loginScreen" class="glass">
+  <h2 style="text-align:center;margin-bottom:20px">Admin <span class="yellow">Login</span></h2>
+  <div class="frm"><label>Password</label><input type="password" id="adminPass" class="input" placeholder="Enter admin password"></div>
+  <button id="loginBtn" class="btn btn-fill btn-lg" style="width:100%">Login</button>
+  <p id="loginError" style="color:var(--danger);text-align:center;margin-top:12px;display:none"></p>
+</div>
+
+<!-- Dashboard (hidden until login) -->
+<div id="dashboard" style="display:none">
+  <h1 style="font-size:2rem;margin-bottom:24px">Admin <span class="yellow">Dashboard</span></h1>
+  <div class="glass" style="margin-bottom:20px">
+    <h3>Site Stats</h3><p style="margin-top:8px">Total Page Views: <strong id="totalViews">-</strong></p>
+  </div>
+  <div class="glass" style="margin-bottom:20px">
+    <h3>Contact Messages</h3><div id="contactList"><p style="color:var(--txt-mute)">Loading...</p></div>
+  </div>
+  <div class="glass" style="margin-bottom:20px">
+    <h3>Actions</h3>
+    <button id="downloadCSV" class="btn btn-fill btn-sm" style="margin-right:8px">Download CSV</button>
+    <button id="logoutBtn" class="btn btn-outline btn-sm">Logout</button>
+  </div>
+  <p style="margin-top:24px"><a href="/sitemap.xml">View Sitemap</a> | <a href="/robots.txt">Robots.txt</a></p>
+</div>
+
+</div></section>
+<footer class="footer"></footer>
+<script src="/script.js"></script>
+<script src="/admin-sec-portal-x92a.js"></script>
+</body>
+</html>

@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Profile - SnapGlow</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='48' fill='%23FFFC00'/><text x='50' y='68' text-anchor='middle' font-size='36' font-weight='900' font-family='Impact' fill='%23000'>SG</text></svg>">
+<script src="/ads.js" defer></script>
+</head>
+<body>
+<nav class="nav"></nav>
+<section style="padding:120px 20px 40px"><div class="container" style="max-width:700px">
+<h1 style="text-align:center;font-size:2.5rem;">Your <span class="yellow">Profile</span></h1>
+
+<div class="glass" style="margin-top:30px">
+  <div class="frm"><label>Display Name</label><input type="text" id="displayName" class="input" placeholder="Enter your display name" maxlength="30"></div>
+  <button id="saveName" class="btn btn-fill">Save Name</button>
+</div>
+
+<div class="glass" style="margin-top:20px">
+  <h3 style="margin-bottom:16px">Stats</h3>
+  <p>Snap Coins: <span class="coins-badge" id="coinDisplay">100</span></p>
+  <p style="margin-top:12px">Day Streak: <strong id="streakDisplay">1</strong></p>
+  <p style="margin-top:8px">Images Generated: <strong id="genCountDisplay">0</strong></p>
+  <p style="margin-top:8px">Score Boosts: <strong id="boostCountDisplay">0</strong></p>
+</div>
+
+<div class="glass" style="margin-top:20px">
+  <h3 style="margin-bottom:16px">Badges Earned</h3>
+  <div id="badgeList" style="display:flex;flex-wrap:wrap;gap:8px"><p style="color:var(--txt-mute)">No badges yet. Start using SnapGlow!</p></div>
+</div>
+
+<!-- Leaderboard -->
+<div class="glass" style="margin-top:20px">
+  <h3 style="margin-bottom:16px">Leaderboard</h3>
+  <div class="leaderboard" id="leaderboard"><p style="color:var(--txt-mute)">Loading...</p></div>
+</div>
+
+<!-- Snap Score Booster -->
+<div class="glass" style="margin-top:20px;text-align:center">
+  <h3 style="margin-bottom:8px">Snap Score Booster</h3>
+  <div class="score-display" id="boostScore">1,000</div>
+  <button id="boostBtn" class="btn btn-fill btn-lg" style="margin-top:16px">Boost Score</button>
+  <p style="color:var(--txt-dim);margin-top:8px;font-size:0.85rem">Clicks today: <span id="boostToday">0</span></p>
+</div>
+
+<!-- Referral -->
+<div class="glass" style="margin-top:20px">
+  <h3 style="margin-bottom:12px">Your Referral Link</h3>
+  <div style="display:flex;gap:8px"><input type="text" id="refLink" class="input" readonly><button class="btn btn-fill btn-sm" id="copyRef">Copy</button></div>
+  <p style="color:var(--txt-dim);margin-top:8px;font-size:0.85rem">Referral clicks: <strong id="refClicks">0</strong> / 5 for OG badge</p>
+</div>
+
+</div></section>
+<footer class="footer"></footer>
+<script src="/script.js"></script>
+<script>
+(function(){
+  if (!SG.ageOk()) { var g = document.createElement('div'); g.className = 'age-gate'; g.id = 'ageGate'; g.innerHTML = '<div><h2>18+ ONLY</h2><p>This site contains adult content</p><button class="btn btn-fill btn-lg" onclick="SG.ageYes()">I AM 18 OR OLDER</button></div>'; document.body.prepend(g); } else { SG.ageYes(); }
+  // Display name
+  var nameInput = document.getElementById('displayName');
+  if (nameInput) nameInput.value = SG.g('displayName', '');
+  document.getElementById('saveName') && document.getElementById('saveName').addEventListener('click', function(){ var n = nameInput.value.trim(); SG.s('displayName', n); SG.toast('Name saved: ' + (n || 'Anonymous')); });
+
+  // Load stats
+  document.getElementById('coinDisplay').textContent = SG.fmt(SG.coins());
+  document.getElementById('streakDisplay').textContent = SG.streak();
+  document.getElementById('genCountDisplay').textContent = SG.g('genCount', 0);
+  document.getElementById('boostCountDisplay').textContent = SG.g('boostCount', 0);
+
+  // Badges
+  var badges = SG.badges();
+  var bl = document.getElementById('badgeList');
+  if (badges.length) { bl.innerHTML = ''; badges.forEach(function(b){ var s = document.createElement('span'); s.className = 'bdg done'; s.textContent = b; bl.appendChild(s); }); } else { bl.innerHTML = '<p style="color:var(--txt-mute)">No badges yet!</p>'; }
+
+  // Leaderboard (mock)
+  var lb = document.getElementById('leaderboard');
+  var users = [{name:SG.g('displayName','You'),coins:SG.coins()},{name:'ShadowKing',coins:1250},{name:'VenomX',coins:980},{name:'Ghost999',coins:750},{name:'StormRider',coins:520}];
+  users.sort(function(a,b){ return b.coins - a.coins; });
+  lb.innerHTML = ''; users.forEach(function(u,i){ lb.innerHTML += '<div class="lb-itm"><span class="lb-rank">#'+(i+1)+'</span><span>'+u.name+'</span><span style="margin-left:auto" class="coins-badge">'+SG.fmt(u.coins)+'</span></div>'; });
+
+  // Referral
+  var refId = SG.g('refId', Math.random().toString(36).substring(2,10));
+  SG.s('refId', refId);
+  var refUrl = location.origin + '?ref=' + refId;
+  document.getElementById('refLink').value = refUrl;
+  document.getElementById('refClicks').textContent = SG.g('refClicks', 0);
+  document.getElementById('copyRef') && document.getElementById('copyRef').addEventListener('click', function(){ SG.copy(refUrl); });
+})();
+</script>
+</body>
+</html>

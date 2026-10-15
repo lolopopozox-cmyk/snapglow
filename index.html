@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="SnapGlow - Elevate Your Snap Presence. AI-powered Snapchat profile tools, uncensored image generation, and 25+ features.">
+<meta property="og:title" content="SnapGlow - Elevate Your Snap Presence">
+<meta property="og:description" content="AI-powered Snapchat profile tools & uncensored image generation.">
+<meta property="og:image" content="https://snapglow.vercel.app/og-image.png">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="SnapGlow">
+<title>SnapGlow - Elevate Your Snap Presence</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='48' fill='%23FFFC00'/><text x='50' y='68' text-anchor='middle' font-size='36' font-weight='900' font-family='Impact,sans-serif' fill='%23000'>SG</text></svg>">
+<!-- Adsterra Ads - configure your keys in /ads.js (see ADSTERRA-SETUP.md) -->
+<script src="/ads.js" defer></script>
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebSite","name":"SnapGlow","url":"https://snapglow.vercel.app","description":"AI-powered Snapchat profile tools & uncensored image generation."}</script>
+</head>
+<body>
+<!-- Navigation placeholder -->
+<nav class="nav"></nav>
+
+<!-- Age Gate Overlay -->
+<div class="age-gate" id="ageGate">
+  <div>
+    <h2 style="font-size:2.5rem;color:var(--snap-yellow);margin-bottom:1rem;font-family:var(--font-title)">YOU MUST BE 18+</h2>
+    <p style="margin-bottom:20px;color:var(--txt-dim)">This site contains adult/NSFW content</p>
+    <button class="btn btn-fill btn-lg" onclick="SG.ageYes()">I AM 18 OR OLDER - ENTER</button>
+    <p style="margin-top:16px;font-size:0.8rem;color:var(--txt-mute)"><a href="https://google.com">Leave Site</a></p>
+  </div>
+</div>
+
+<!-- Hero Section -->
+<section class="hero">
+  <div class="hero-bg"></div>
+  <div class="hero-content">
+    <h1>Snap<span class="yellow">Glow</span></h1>
+    <p>Elevate your Snap presence with AI-powered profile tools, uncensored image generation, and 25+ dope features.</p>
+    <div style="display:flex;gap:16px;justify-content:center;flex-wrap:wrap">
+      <a href="/generator" class="btn btn-fill btn-lg">Try Now</a>
+      <a href="/features" class="btn btn-outline btn-lg">All Features</a>
+    </div>
+    <div style="margin-top:40px;font-size:2rem" class="cntr">
+      <span id="streakCounter"></span>
+    </div>
+  </div>
+</section>
+
+<!-- Ad Banner -->
+<div class="container"><div class="ad-box" style="margin-top:-30px"><span class="ad-tg">Advertisement</span><div id="ad-banner-top" style="min-height:50px"></div></div></div>
+
+<!-- Features Preview -->
+<main class="container" style="padding:60px 0">
+  <h2 style="text-align:center;font-size:2rem;margin-bottom:40px">Why <span class="yellow">SnapGlow</span>?</h2>
+  <div class="grid">
+    <div class="card"><div class="icon">\u{1F4F8}</div><h3>AI Profile Pic Generator</h3><p>Create stunning, uncensored Snapchat profile pictures with AI. Just enter your username and let the magic happen.</p></div>
+    <div class="card"><div class="icon">\u{1F3AF}</div><h3>Snap Score Booster</h3><p>Gamified score simulator. Click to boost and watch your snap score explode with cool animations.</p></div>
+    <div class="card"><div class="icon">\u{1F4F1}</div><h3>Custom Snapcode</h3><p>Generate custom Snapcode-style QR codes with SnapGlow branding. Download and share instantly.</p></div>
+    <div class="card"><div class="icon">\u{1F451}</div><h3>Flex Card Maker</h3><p>Create shareable Flex Cards with your name, rank, and a unique tagline. Multiple templates available.</p></div>
+    <div class="card"><div class="icon">\u{1F525}</div><h3>Roast Dominator</h3><p>AI-powered roast generator. Enter a name and get a savage, uncensored roast instantly.</p></div>
+    <div class="card"><div class="icon">\u{1F3B0}</div><h3>Spin to Win</h3><p>Slot machine mini-game with in-site Snap Coins. Spin and unlock premium features.</p></div>
+  </div>
+  <div style="text-align:center;margin-top:40px">
+    <a href="/features" class="btn btn-fill btn-lg">View All 25+ Features</a>
+  </div>
+</main>
+
+<!-- Ad Mid -->
+<div class="container"><div class="ad-box"><span class="ad-tg">Sponsored</span><div id="ad-mid" style="min-height:90px"></div><small style="color:var(--txt-mute)">Ads keep SnapGlow free</small></div></div>
+
+<!-- CTA Section -->
+<section style="padding:60px 20px;text-align:center">
+  <div class="glass" style="max-width:600px;margin:0 auto">
+    <h2 style="font-size:2rem;margin-bottom:12px">Ready to <span class="yellow">Glow Up?</span></h2>
+    <p style="color:var(--txt-dim);margin-bottom:24px">Join thousands of Snap users creating fire content daily.</p>
+    <a href="/generator" class="btn btn-fill btn-lg">Get Started Free</a>
+  </div>
+</section>
+
+<!-- Footer -->
+<footer class="footer"></footer>
+
+<!-- Music Player Bar -->
+<div class="music-bar" style="display:none"></div>
+
+<script src="/script.js"></script>
+<script>
+(function(){
+  if (SG.ageOk()) { var g = document.getElementById('ageGate'); if (g) g.classList.add('hide'); var l = document.querySelectorAll('.locked'); for (var i = 0; i < l.length; i++) l[i].classList.add('show'); }
+  var streak = SG.streak();
+  var sc = document.getElementById('streakCounter');
+  if (sc) sc.textContent = 'Day ' + streak + ' of your GlowUp journey \u{1F31F}';
+  if (streak >= 7) SG.giveBadge('Day7Streak');
+})();
+</script>
+</body>
+</html>

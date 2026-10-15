@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="SnapGlow AI Generator - Create custom uncensored Snapchat profile pictures with AI. 18+ required.">
+<meta property="og:title" content="SnapGlow AI Image Generator">
+<meta property="og:description" content="Create uncensored AI Snapchat profile pictures.">
+<title>AI Generator - SnapGlow</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='48' fill='%23FFFC00'/><text x='50' y='68' text-anchor='middle' font-size='36' font-weight='900' font-family='Impact' fill='%23000'>SG</text></svg>">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebApplication","name":"SnapGlow AI Generator","url":"https://snapglow.vercel.app/generator","applicationCategory":"Multimedia","operatingSystem":"All"}</script>
+<script src="/ads.js" defer></script>
+</head>
+<body>
+<nav class="nav"></nav>
+<!-- Age Gate -->
+<div class="age-gate" id="ageGate"><div><h2 style="font-size:2.5rem;color:var(--snap-yellow);margin-bottom:1rem">18+ ONLY</h2><p style="margin-bottom:20px;color:var(--txt-dim)">This tool generates adult/NSFW content</p><button class="btn btn-fill btn-lg" onclick="SG.ageYes()">I AM 18 OR OLDER</button></div></div>
+<section style="padding:120px 20px 40px">
+  <div class="container" style="max-width:700px">
+    <h1 style="text-align:center;font-size:2.5rem;margin-bottom:10px">AI <span class="yellow">Profile Pic</span> Generator</h1>
+    <p style="text-align:center;color:var(--txt-dim);margin-bottom:30px">Generate uncensored, high-resolution Snapchat profile pictures with AI</p>
+    <!-- Generator Form -->
+    <div class="glass">
+      <div class="frm"><label>Snapchat Username</label><input type="text" id="username" class="input" placeholder="e.g. shadow_snap99" maxlength="30"></div>
+      <div class="frm"><label>Prompt / Style (optional)</label><input type="text" id="prompt" class="input" placeholder="e.g. neon cyberpunk, gangster, romantic..."></div>
+      <div class="frm"><label class="chk"><input type="checkbox" id="ageConfirm"> I confirm I am 18+ and want uncensored content</label></div>
+      <button id="generateBtn" class="btn btn-fill btn-lg" style="width:100%">Generate Image</button>
+    </div>
+    <!-- Result -->
+    <div class="result" id="resultBox"><p style="color:var(--txt-mute)">Your generated image will appear here</p></div>
+    <div id="resultActions" style="text-align:center;margin-top:16px;display:none">
+      <button class="btn btn-fill btn-sm" id="downloadBtn">Download</button>
+      <button class="btn btn-outline btn-sm" onclick="SG.shareSnap('Check out my SnapGlow profile pic!')">Share on Snapchat</button>
+    </div>
+    <!-- Ad -->
+    <div class="ad-box" style="margin-top:30px"><span class="ad-tg">Sponsored</span><div id="ad-gen" style="min-height:90px"></div></div>
+  </div>
+</section>
+<footer class="footer"></footer>
+<script src="/script.js"></script>
+<script src="/generator.js"></script>
+</body>
+</html>

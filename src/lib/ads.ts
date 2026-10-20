@@ -21,15 +21,52 @@ export type AdSlotId =
 
 export const AD_SLOTS: Record<AdSlotId, string> = {
   /** In-feed card, shown after every 6th post in the community feed. */
-  'feed-inline': '',
+  'feed-inline': `<script async="async" data-cfasync="false" src="https://bicea.org/21/0d4c75643cc06676512b3e3c809c07c1"></script>
+<div id="container-0d4c75643cc06676512b3e3c809c07c1"></div>`,
   /** Desktop sidebar on leaderboard pages (hidden on mobile). */
-  'leaderboard-sidebar': '',
+  'leaderboard-sidebar': `<script>
+  atOptions = {
+    'key' : 'acf001038c85c0f9c97525cc596068b8',
+    'format' : 'iframe',
+    'height' : 250,
+    'width' : 300,
+    'params' : {}
+  };
+</script>
+<script src="https://www.highperformanceformat.com/acf001038c85c0f9c97525cc596068b8/invoke.js"></script>`,
   /** Below the page hero on Discover. */
-  'discover-hero-bottom': '',
+  'discover-hero-bottom': `<script>
+  atOptions = {
+    'key' : '017095379f65e3e49171508f22749ba3',
+    'format' : 'iframe',
+    'height' : 90,
+    'width' : 728,
+    'params' : {}
+  };
+</script>
+<script src="https://www.highperformanceformat.com/017095379f65e3e49171508f22749ba3/invoke.js"></script>`,
   /** Below the page hero on Battles. */
-  'battles-hero-bottom': '',
+  'battles-hero-bottom': `<script>
+  atOptions = {
+    'key' : '017095379f65e3e49171508f22749ba3',
+    'format' : 'iframe',
+    'height' : 90,
+    'width' : 728,
+    'params' : {}
+  };
+</script>
+<script src="https://www.highperformanceformat.com/017095379f65e3e49171508f22749ba3/invoke.js"></script>`,
   /** Side column on the battle detail page (stacks below on mobile). */
-  'battle-side': '',
+  'battle-side': `<script>
+  atOptions = {
+    'key' : 'acf001038c85c0f9c97525cc596068b8',
+    'format' : 'iframe',
+    'height' : 250,
+    'width' : 300,
+    'params' : {}
+  };
+</script>
+<script src="https://www.highperformanceformat.com/acf001038c85c0f9c97525cc596068b8/invoke.js"></script>`,
 };
 
 /** Friendly label shown on placeholders so the owner knows what goes where. */

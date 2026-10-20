@@ -6,10 +6,28 @@
  * honest during development. Slots collapse gracefully and are NEVER placed
  * next to vote/download buttons (no accidental-click traps).
  */
+import { useEffect, useRef } from 'react';
 import { AD_SLOTS, AD_SLOT_LABELS, type AdSlotId } from '../lib/ads';
 
 export function AdSlot({ slot, className = '' }: { slot: AdSlotId; className?: string }) {
   const code = (AD_SLOTS[slot] ?? '').trim();
+  const embedRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const host = embedRef.current;
+    if (!code || !host) return;
+    // Scripts parsed via innerHTML carry the "already started" flag and never
+    // execute; re-create each one as a live element so the embed runs.
+    if (host.dataset.adScriptsLive) return;
+    host.dataset.adScriptsLive = '1';
+    host.querySelectorAll('script').forEach((dead) => {
+      const live = document.createElement('script');
+      for (const attr of Array.from(dead.attributes)) live.setAttribute(attr.name, attr.value);
+      live.text = dead.text;
+      dead.replaceWith(live);
+    });
+  }, [code]);
+
   if (code) {
     return (
       <div className={`overflow-hidden rounded-2xl ${className}`} role="complementary" aria-label="Advertisement">
@@ -17,6 +35,7 @@ export function AdSlot({ slot, className = '' }: { slot: AdSlotId; className?: s
           Advertisement
         </p>
         <div
+          ref={embedRef}
           className="flex justify-center"
           dangerouslySetInnerHTML={{ __html: code }}
         />

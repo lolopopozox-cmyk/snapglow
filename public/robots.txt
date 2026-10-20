@@ -13,4 +13,4 @@ Disallow: /dashboard
 Disallow: /admin
 Disallow: /create
 
-Sitemap: https://www.your-domain.com/sitemap.xml
+Sitemap: https://snapglow-nine.vercel.app/sitemap.xml

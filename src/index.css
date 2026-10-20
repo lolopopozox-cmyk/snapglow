@@ -1,0 +1,323 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─────────────────────────────────────────────────────────────
+   Snap Glow design tokens — v7 "Snap Pop"
+   (see DESIGN_SYSTEM.md). Bold graphic pop-brutalism:
+   yellow-led flat color, 2px ink borders, hard offset shadows,
+   sticker badges, halftone dots. Unbounded display type.
+   Light theme only — ink is for text, borders and shadows,
+   NEVER large dark surfaces.
+   ───────────────────────────────────────────────────────────── */
+:root {
+  /* palette */
+  --sun: #ffce00;
+  --sun-soft: #ffdf4d;
+  --sun-tint: #fff3b8;
+  --cream: #fff9e8;
+  --ink: #141414;
+  --ink-soft: #3d3d38;
+  --ink-mute: #7c7668;
+  --violet: #7c3aed;
+  --pink: #ff5ca8;
+  --sky: #38bdf8;
+
+  /* tints */
+  --lav: #ede9fe;
+  --mint: #dcfce7;
+  --blush: #ffd9ea;
+  --cyantint: #d8f3ff;
+  --peach: #ffe3b3;
+
+  /* shape */
+  --r-sm: 0.75rem;
+  --r: 1rem;
+  --r-lg: 1.25rem;
+  --r-xl: 1.5rem;
+  --r-pill: 999px;
+
+  /* hard offset shadows — the v7 signature */
+  --sh-sm: 3px 3px 0 0 var(--ink);
+  --sh: 6px 6px 0 0 var(--ink);
+  --sh-lg: 10px 10px 0 0 var(--ink);
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  @apply font-body text-ink antialiased;
+  background-color: var(--cream);
+  /* faint halftone dot field over warm cream */
+  background-image: radial-gradient(rgba(20, 20, 20, 0.055) 1.2px, transparent 1.3px);
+  background-size: 22px 22px;
+}
+
+/* halftone dot patch — decorative accent areas */
+.halftone {
+  background-image: radial-gradient(rgba(20, 20, 20, 0.16) 1.6px, transparent 1.7px);
+  background-size: 16px 16px;
+}
+.halftone-light {
+  background-image: radial-gradient(rgba(255, 255, 255, 0.35) 1.6px, transparent 1.7px);
+  background-size: 16px 16px;
+}
+
+/* display type — Unbounded, chunky and unmistakable */
+.font-display,
+h1, h2, h3 {
+  font-family: 'Unbounded', 'Space Grotesk', system-ui, sans-serif;
+  letter-spacing: -0.01em;
+}
+
+/* hero headline — MEGA type, uppercase by design */
+.hero-display {
+  font-family: 'Unbounded', 'Space Grotesk', system-ui, sans-serif;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  line-height: 1.04;
+  text-transform: uppercase;
+  font-size: clamp(2.5rem, 7.2vw, 6.25rem);
+}
+
+/* yellow marker highlight behind a headline word */
+.marker {
+  background-image: linear-gradient(180deg, transparent 56%, var(--sun) 56%, var(--sun) 94%, transparent 94%);
+  padding: 0 0.08em;
+}
+
+/* gradient headline accent — vivid violet → hot pink (used sparingly) */
+.grad-text {
+  background: linear-gradient(92deg, #7c3aed 0%, #ff5ca8 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* sticker eyebrow label — rotated chip with ink border + hard shadow */
+.eyebrow,
+.sticker {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.35rem 0.85rem;
+  border: 2px solid var(--ink);
+  border-radius: var(--r-pill);
+  background: #ffffff;
+  box-shadow: var(--sh-sm);
+  font-family: 'Space Grotesk', Inter, system-ui, sans-serif;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+
+/* ── buttons — flat vivid fill, 2px ink border, hard shadow,
+      physical press on hover/active ── */
+.btn-cta {
+  background: var(--sun);
+  color: var(--ink);
+  border: 2px solid var(--ink);
+  box-shadow: 5px 5px 0 0 var(--ink);
+  transition: transform 0.12s ease, box-shadow 0.12s ease, background-color 0.12s ease;
+}
+.btn-cta:hover {
+  transform: translate(2px, 2px);
+  box-shadow: 3px 3px 0 0 var(--ink);
+  background: var(--sun-soft);
+}
+.btn-cta:active {
+  transform: translate(5px, 5px);
+  box-shadow: 0 0 0 0 var(--ink);
+}
+
+/* XL CTA for hero / final CTA */
+.btn-xl {
+  padding: 1.05rem 2.4rem;
+  font-size: 1.15rem;
+}
+
+/* secondary CTA — violet fill, white text */
+.btn-violet {
+  background: var(--violet);
+  color: #fff;
+  border: 2px solid var(--ink);
+  box-shadow: 5px 5px 0 0 var(--ink);
+  transition: transform 0.12s ease, box-shadow 0.12s ease, filter 0.12s ease;
+}
+.btn-violet:hover {
+  transform: translate(2px, 2px);
+  box-shadow: 3px 3px 0 0 var(--ink);
+  filter: brightness(1.08);
+}
+.btn-violet:active {
+  transform: translate(5px, 5px);
+  box-shadow: 0 0 0 0 var(--ink);
+}
+
+/* ghost button — flat white, ink border, hard shadow */
+.btn-ghost {
+  background: #ffffff;
+  border: 2px solid var(--ink);
+  color: var(--ink);
+  box-shadow: 4px 4px 0 0 var(--ink);
+  transition: transform 0.12s ease, box-shadow 0.12s ease, background-color 0.12s ease;
+}
+.btn-ghost:hover {
+  transform: translate(2px, 2px);
+  box-shadow: 2px 2px 0 0 var(--ink);
+  background: var(--sun-tint);
+}
+.btn-ghost:active {
+  transform: translate(4px, 4px);
+  box-shadow: 0 0 0 0 var(--ink);
+}
+
+/* glass button — retired in v7; kept as a flat white variant so any
+   lingering usage still matches the language */
+.btn-glass {
+  background: #ffffff;
+  border: 2px solid var(--ink);
+  color: var(--ink);
+  box-shadow: 4px 4px 0 0 var(--ink);
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.btn-glass:hover {
+  transform: translate(2px, 2px);
+  box-shadow: 2px 2px 0 0 var(--ink);
+}
+.btn-glass:active {
+  transform: translate(4px, 4px);
+  box-shadow: 0 0 0 0 var(--ink);
+}
+
+/* ── card surface — flat white, 2px ink border, hard shadow ── */
+.card-surface {
+  position: relative;
+  background: #ffffff;
+  border: 2px solid var(--ink);
+  border-radius: var(--r-lg);
+  box-shadow: var(--sh);
+}
+
+/* card hover micro-interaction — lift against the hard shadow */
+.card-hover {
+  transition: transform 0.16s ease, box-shadow 0.16s ease;
+}
+.card-hover:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 9px 9px 0 0 var(--ink);
+}
+
+/* full-bleed breakout — escape the max-w container */
+.bleed {
+  position: relative;
+  left: 50%;
+  right: 50%;
+  margin-left: -50vw;
+  margin-right: -50vw;
+  width: 100vw;
+}
+
+/* flat tint page header panel — ink border + hard shadow, NO art */
+.page-hero {
+  position: relative;
+  overflow: hidden;
+  background: var(--sun-tint);
+  border: 2px solid var(--ink);
+  box-shadow: var(--sh);
+}
+
+/* header bar — flat white, 2px ink bottom border */
+.nav-bar {
+  background: #ffffff;
+  border-bottom: 2px solid var(--ink);
+}
+
+/* dividers */
+.hr-pop {
+  border: 0;
+  height: 3px;
+  background: var(--ink);
+}
+.hr-soft {
+  border: 0;
+  height: 2px;
+  background: rgba(20, 20, 20, 0.14);
+}
+
+/* ── marquee ticker ─────────────────────────────────────────── */
+.marquee {
+  overflow: hidden;
+}
+.marquee-track {
+  display: flex;
+  width: max-content;
+  animation: marquee-scroll 26s linear infinite;
+}
+@keyframes marquee-scroll {
+  to { transform: translateX(-50%); }
+}
+
+/* accessible focus */
+:focus-visible {
+  outline: 3px solid var(--violet);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+
+::selection {
+  background: var(--sun);
+  color: var(--ink);
+}
+
+/* thin scrollbars for horizontal card rails */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* scroll reveal — subtle fade-up, applied via <Reveal/>.
+   Progressive enhancement: content is VISIBLE by default. The hidden-then-fade
+   state only applies when JS is confirmed running (html.js is set by an inline
+   <head> script + main.tsx), so no-JS or a dead observer can never hide content. */
+.reveal {
+  opacity: 1;
+  transform: none;
+}
+html.js .reveal {
+  opacity: 0;
+  transform: translateY(18px);
+  transition: opacity 0.6s ease, transform 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+}
+html.js .reveal.in {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* soft rise-in for above-the-fold sections */
+@keyframes sg-rise {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.sg-rise {
+  animation: sg-rise 0.5s ease both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .sg-rise { animation: none; }
+  .marquee-track { animation: none; }
+  .reveal, html.js .reveal { opacity: 1; transform: none; transition: none; }
+  .btn-cta, .btn-violet, .btn-ghost, .btn-glass, .card-hover { transition: none; }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

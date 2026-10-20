@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- Progressive-enhancement flag: reveal animations only apply when JS runs.
+         Without this class, all content stays visible (see .reveal in CSS). -->
+    <script>
+      document.documentElement.classList.add('js');
+    </script>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#FFCE00" />
+    <title>Snap Glow — the web home for Snapchat users</title>
+    <meta
+      name="description"
+      content="Snap Glow is the web home for Snapchat users: create flex and streak cards, battle head-to-head in vote-offs, earn Glow Points and climb the leaderboards."
+    />
+    <link rel="manifest" href="/site.webmanifest" />
+    <meta property="og:site_name" content="Snap Glow" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Snap Glow — the web home for Snapchat users" />
+    <meta
+      property="og:description"
+      content="Create flex and streak cards for Snapchat, battle head-to-head in vote-offs, earn Glow Points and climb the leaderboards."
+    />
+    <!-- Replace with your absolute domain URL once live, e.g. https://your-domain.com/art/hero-sky.jpg -->
+    <meta property="og:image" content="https://www.your-domain.com/art/hero-sky.jpg" />
+    <!-- Unbounded (Google Fonts, display 500–900) + Space Grotesk
+         (labels/nav) + Inter (body), with system fallbacks.
+         See DESIGN_SYSTEM.md for the type choice. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;600;700;800;900&family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

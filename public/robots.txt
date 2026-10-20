@@ -1,0 +1,16 @@
+# Snap Glow — robots.txt (demo build)
+# Public pages are crawlable. Private/demo-auth/admin surfaces are
+# additionally protected with <meta name="robots" content="noindex">.
+# robots.txt is NOT access control — it is only a crawling hint.
+
+User-agent: *
+Allow: /
+
+# Never index demo-auth, private dashboards or the admin setup page
+# (they also carry noindex meta tags).
+Disallow: /signin
+Disallow: /dashboard
+Disallow: /admin
+Disallow: /create
+
+Sitemap: https://www.your-domain.com/sitemap.xml

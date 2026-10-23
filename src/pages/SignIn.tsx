@@ -8,6 +8,21 @@ import { sessionUser, useSnapGlow } from '../lib/store';
 
 const USERNAME_RE = /^[a-z0-9_.]{3,20}$/;
 
+/** Emoji personas offered at sign-up (mixed personas). */
+const PERSONA_EMOJIS = ['👦', '👦🏻', '👦🏿', '🧑', '👩', '👩🏽', '👩🏻‍🦰', '🧕', '👱‍♀️', '🧑‍🦱'];
+
+/** Initial-disc color swatches (HSL hues). */
+const HUE_SWATCHES: Array<{ hue: number; label: string }> = [
+  { hue: 0, label: 'Red' },
+  { hue: 30, label: 'Orange' },
+  { hue: 55, label: 'Yellow' },
+  { hue: 140, label: 'Green' },
+  { hue: 200, label: 'Sky' },
+  { hue: 260, label: 'Violet' },
+  { hue: 320, label: 'Pink' },
+  { hue: 350, label: 'Rose' },
+];
+
 type TabId = 'create' | 'login';
 
 function CreateForm() {
@@ -17,6 +32,9 @@ function CreateForm() {
   const [displayName, setDisplayName] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  /** null = "Skip — use my initials" (default). */
+  const [persona, setPersona] = useState<string | null>(null);
+  const [hue, setHue] = useState(260);
   const [busy, setBusy] = useState(false);
   const [errors, setErrors] = useState<{ name?: string; username?: string; password?: string; form?: string }>({});
 
@@ -32,7 +50,12 @@ function CreateForm() {
       return;
     }
     setBusy(true);
-    const res = await sg.signUp(displayName, username, password);
+    const res = await sg.signUp(
+      displayName,
+      username,
+      password,
+      persona ? { hue, avatarEmoji: persona } : { hue },
+    );
     setBusy(false);
     if (res.ok) {
       toast(res.message);
@@ -45,15 +68,74 @@ function CreateForm() {
   return (
     <form onSubmit={submit} noValidate>
       <div className="mb-6 flex items-center gap-4 rounded-2xl border border-line bg-white p-4">
-        <Avatar name={displayName.trim() || 'Your name'} hue={160} size={56} ring />
+        <Avatar
+          name={displayName.trim() || 'Your name'}
+          hue={hue}
+          emoji={persona ?? undefined}
+          size={56}
+          ring
+        />
         <div>
           <p className="text-sm font-extrabold text-ink">Your avatar</p>
           <p className="mt-1 text-xs font-medium text-ink-mute">
-            A colorful avatar is generated from your name — you can upload a photo on your profile later.
+            Pick a vibe — an emoji persona or your initials in your color. You can upload a real photo
+            on your profile later.
           </p>
         </div>
       </div>
       <div className="space-y-4">
+        <div>
+          <p className="mb-2 text-sm font-extrabold text-ink">Pick a vibe</p>
+          <div className="flex flex-wrap gap-2" role="group" aria-label="Avatar persona">
+            <button
+              type="button"
+              onClick={() => setPersona(null)}
+              aria-pressed={persona === null}
+              title="Skip — use my initials"
+              aria-label="Skip — use my initials"
+              className={`grid h-12 w-12 min-h-[44px] min-w-[44px] place-items-center rounded-full border-2 bg-white transition ${
+                persona === null ? 'border-ink' : 'border-transparent hover:border-brand-cyan'
+              }`}
+            >
+              <Avatar name={displayName.trim() || 'You'} hue={hue} size={38} />
+            </button>
+            {PERSONA_EMOJIS.map((emoji) => (
+              <button
+                key={emoji}
+                type="button"
+                onClick={() => setPersona(emoji)}
+                aria-pressed={persona === emoji}
+                aria-label={`Emoji persona ${emoji}`}
+                title={`Emoji persona ${emoji}`}
+                className={`grid h-12 w-12 min-h-[44px] min-w-[44px] place-items-center rounded-full border-2 bg-white text-2xl transition ${
+                  persona === emoji ? 'border-ink' : 'border-transparent hover:border-brand-cyan'
+                }`}
+              >
+                <span aria-hidden="true">{emoji}</span>
+              </button>
+            ))}
+          </div>
+          <p className="mt-2 text-xs font-medium text-ink-mute">
+            First disc = <span className="font-bold text-ink">Skip — use my initials</span>.
+          </p>
+          <p className="mb-2 mt-4 text-sm font-extrabold text-ink">Disc color</p>
+          <div className="flex flex-wrap gap-2" role="group" aria-label="Avatar disc color">
+            {HUE_SWATCHES.map((s) => (
+              <button
+                key={s.hue}
+                type="button"
+                onClick={() => setHue(s.hue)}
+                aria-pressed={hue === s.hue}
+                aria-label={s.label}
+                title={s.label}
+                style={{ background: `hsl(${s.hue}, 82%, 52%)` }}
+                className={`h-10 w-10 rounded-full border-2 border-ink transition ${
+                  hue === s.hue ? 'ring-2 ring-brand-violet' : 'hover:opacity-80'
+                }`}
+              />
+            ))}
+          </div>
+        </div>
         <div>
           <Field
             label="Display name"

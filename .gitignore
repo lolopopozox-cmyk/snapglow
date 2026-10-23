@@ -32,3 +32,6 @@ Thumbs.db
 
 .vercel
 .env*
+
+# admin credentials (never commit)
+ADMIN_CREDENTIALS.txt

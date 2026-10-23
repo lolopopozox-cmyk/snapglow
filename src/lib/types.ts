@@ -1,27 +1,37 @@
 /**
- * Snap Glow domain types (v4 — real-feeling local accounts).
+ * Snap Glow domain types (v5 — Supabase-backed shared accounts).
  *
- * Accounts live in this browser's localStorage only. There are no fake
- * users: every record belongs to someone who actually signed up here.
- * Empty states ("Be the first to post!") are used instead of sample data.
+ * Accounts and all public content live in Supabase (Postgres + Auth +
+ * Storage). Passwords are handled by Supabase Auth — never stored in
+ * app code. There are no fake users: every record belongs to a real
+ * signed-up account. Empty states are used instead of sample data.
  */
 
 export interface User {
-  id: string; // 'u-…'
+  id: string; // Supabase auth uuid
   username: string; // without @, lowercase
   displayName: string;
   bio: string;
   /** avatar gradient hue (0-360) */
   hue: number;
-  /** SHA-256 hex digest — never a plaintext password */
-  passwordHash: string;
-  /** Glow Points earned through activity */
+  /** uploaded avatar photo (data URL, downscaled) */
+  avatar?: string;
+  /** emoji persona avatar (optional) */
+  avatarEmoji?: string;
+  /** profile theme id (level-gated) */
+  theme?: string;
+  /** Glow Points earned through activity (server-maintained) */
   points: number;
-  /** earned badge ids (voter rewards, milestones) */
+  /** earned badge ids */
   badges: string[];
   /** YYYY-MM-DD of the last daily-login bonus */
   lastLoginDay: string;
   joinedAt: string; // ISO
+  /** admin flag (from admins table, session user only) */
+  isAdmin?: boolean;
+  /** demo/test account marker (admin-managed) */
+  isDemo?: boolean;
+  isSuspended?: boolean;
 }
 
 export interface FlexCardData {
@@ -31,7 +41,9 @@ export interface FlexCardData {
   caption: string;
   template: string; // CardTemplate id
   imageKind: 'art' | 'upload';
-  /** data URL of the user's own uploaded photo (this browser only) */
+  /** public storage URL of the user's uploaded photo */
+  imagePath?: string;
+  /** data URL of the user's own uploaded photo (creator's browser only) */
   imageDataUrl?: string;
   /** seed for generative placeholder art */
   artSeed: string;
@@ -67,16 +79,33 @@ export interface Post {
   createdAt: string;
 }
 
-export type BattleStatus = 'live' | 'ended';
+export interface BattleComment {
+  id: string;
+  battleId: string;
+  authorId: string;
+  text: string;
+  createdAt: string;
+}
+
+export type BattleStatus = 'pending' | 'live' | 'declined' | 'ended' | 'cancelled';
 
 export interface Battle {
   id: string;
   title: string;
   cardAId: string;
-  cardBId: string;
-  createdBy: string; // user id
+  /** null until a challenge is accepted */
+  cardBId: string | null;
+  createdBy: string; // user id (challenger)
+  /** invited opponent (null = open challenge anyone can accept) */
+  opponentId: string | null;
+  status: BattleStatus;
+  /** 'a' | 'b' | 'tie' | null — authoritative once ended */
+  winner: 'a' | 'b' | 'tie' | null;
+  durationHours: number;
   createdAt: string;
-  endsAt: string; // ISO — default 12h after creation
+  /** ISO — empty string while pending */
+  endsAt: string;
+  acceptedAt?: string | null;
 }
 
 export interface BattleTally {
@@ -88,12 +117,13 @@ export interface BattleTally {
 
 export interface Report {
   id: string;
-  targetType: 'post' | 'card' | 'user' | 'battle';
+  targetType: 'post' | 'card' | 'user' | 'battle' | 'comment';
   targetId: string;
   reason: string;
   details: string;
   reporterId: string | null;
   createdAt: string;
+  status?: 'open' | 'reviewed' | 'actioned' | 'dismissed';
 }
 
 export interface Notification {

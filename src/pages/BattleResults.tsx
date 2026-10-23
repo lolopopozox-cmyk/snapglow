@@ -85,7 +85,7 @@ export default function BattleResults() {
   }
 
   const cardA = getCard(sg.state, battle.cardAId);
-  const cardB = getCard(sg.state, battle.cardBId);
+  const cardB = battle.cardBId ? getCard(sg.state, battle.cardBId) : undefined;
   const ownerA = cardA ? getUser(sg.state, cardA.ownerId) : undefined;
   const ownerB = cardB ? getUser(sg.state, cardB.ownerId) : undefined;
   if (!cardA || !cardB || !ownerA || !ownerB) return <NotFound />;

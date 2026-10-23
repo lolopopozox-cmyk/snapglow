@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation } from 'rea
 import { ToastProvider } from './components/Toast';
 import { Header } from './components/Header';
 import { Footer } from './components/Footer';
+import { MobileTabBar } from './components/MobileTabBar';
 
 import Home from './pages/Home';
 import Discover from './pages/Discover';
@@ -25,7 +26,7 @@ import Terms from './pages/Terms';
 import Guidelines from './pages/Guidelines';
 import SignIn from './pages/SignIn';
 import Dashboard from './pages/Dashboard';
-import Admin from './pages/Admin';
+import Admin, { AdminLogin } from './pages/Admin';
 import NotFound from './pages/NotFound';
 
 function ScrollToTop() {
@@ -46,10 +47,11 @@ function SiteLayout() {
         Skip to content
       </a>
       <Header />
-      <main id="main" className="mx-auto w-full max-w-7xl flex-1 px-4 py-8 sm:px-6">
+      <main id="main" className="mx-auto w-full max-w-7xl flex-1 px-4 py-8 pb-24 sm:px-6 lg:pb-8">
         <Outlet />
       </main>
       <Footer />
+      <MobileTabBar />
     </div>
   );
 }
@@ -83,7 +85,8 @@ export default function App() {
             {/* 25 */}<Route path="guidelines" element={<Guidelines />} />
             {/* 26 */}<Route path="signin" element={<SignIn />} />
             {/* 27 */}<Route path="dashboard" element={<Dashboard />} />
-            {/* 28 */}<Route path="admin" element={<Admin />} />
+            {/* 28 */}<Route path="admin/login" element={<AdminLogin />} />
+            <Route path="admin" element={<Admin />} />
             {/* 29 */}<Route path="*" element={<NotFound />} />
           </Route>
         </Routes>

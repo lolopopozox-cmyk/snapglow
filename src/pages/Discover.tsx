@@ -1,68 +1,140 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { Compass, Flame, Search as SearchIcon, Sparkles, Swords, TrendingUp } from 'lucide-react';
+import {
+  getUser,
+  leaderboard,
+  sessionUser,
+  trendingCards,
+  useSnapGlow,
+  userStats,
+} from '../lib/store';
 import { Seo } from '../components/Seo';
-import { useSnapGlow, trendingCards, leaderboard, getUser } from '../lib/store';
 import {
   Avatar,
-  FlexCard,
-  PageHeader,
-  FollowButton,
-  Tabs,
+  CtaButton,
   EmptyState,
+  FlexCard,
+  FollowButton,
   LevelBadge,
+  PageHeader,
+  SectionTitle,
+  Tabs,
 } from '../components/ui';
 import { AdSlot } from '../components/AdSlot';
-import { Search, TrendingUp, Sparkles } from 'lucide-react';
+import { useToast } from '../components/Toast';
 import { formatCount, handle } from '../lib/format';
+import type { User } from '../lib/types';
 
 type DiscoverTab = 'all' | 'trending' | 'new' | 'liked' | 'creators';
 
 const TABS: Array<{ id: DiscoverTab; label: string }> = [
-  { id: 'all', label: 'All' },
+  { id: 'all', label: 'All creators' },
   { id: 'trending', label: 'Trending' },
-  { id: 'new', label: 'New' },
-  { id: 'liked', label: 'Most Liked' },
-  { id: 'creators', label: 'Top Creators' },
+  { id: 'new', label: 'Fresh faces' },
+  { id: 'liked', label: 'Most liked' },
+  { id: 'creators', label: 'Top creators' },
 ];
 
-function CreatorCard({ userId }: { userId: string }) {
+function CreatorCard({ user, challengeable }: { user: User; challengeable: boolean }) {
   const sg = useSnapGlow();
-  const user = getUser(sg.state, userId);
-  if (!user) return null;
-  const stats = leaderboard(sg.state, 'daily').find((r) => r.user.id === userId)?.stats;
+  const { toast } = useToast();
+  const me = sessionUser(sg.state);
+  const stats = userStats(sg.state, user.id);
+  const myCard = sg.state.cards.find((c) => c.published && c.ownerId === me?.id);
+
+  const challenge = async () => {
+    if (!me || !myCard) return;
+    const res = await sg.createChallenge(
+      `${me.displayName} vs ${user.displayName}`.slice(0, 60),
+      myCard.id,
+      user.username,
+      12,
+    );
+    toast(res.message);
+  };
+
   return (
-    <div className="card-surface flex flex-col items-center rounded-card p-6 text-center">
-      <Avatar name={user.displayName} hue={user.hue} size={72} />
-      <p className="mt-3 flex flex-wrap items-center justify-center gap-2 font-display text-xl font-extrabold text-ink">
-        <span>{user.displayName}</span>
-        <LevelBadge points={user.points} size="sm" />
-      </p>
-      <p className="text-sm text-ink-mute">{handle(user.username)}</p>
-      <p className="mt-1 line-clamp-2 text-sm text-ink-soft">{user.bio}</p>
-      <div className="mt-4 flex w-full justify-center gap-6">
-        <div className="text-center">
-          <p className="font-display text-lg font-extrabold text-ink">{formatCount(stats?.likesReceived ?? 0)}</p>
-          <p className="text-xs font-bold uppercase tracking-wider text-ink-mute">Likes</p>
+    <article className="card-surface overflow-hidden rounded-card">
+      {/* hue cover */}
+      <div
+        className="h-16 border-b-2 border-ink"
+        aria-hidden="true"
+        style={{
+          background: `linear-gradient(120deg, hsl(${user.hue}, 85%, 55%), hsl(${(user.hue + 60) % 360}, 80%, 60%))`,
+        }}
+      />
+      <div className="p-5">
+        <div className="-mt-12 flex items-end justify-between gap-3">
+          <Link to={`/u/${user.username}`} aria-label={`View ${user.displayName}'s profile`}>
+            <Avatar name={user.displayName} hue={user.hue} src={user.avatar} emoji={user.avatarEmoji} size={72} ring />
+          </Link>
+          <LevelBadge points={user.points} size="sm" />
         </div>
-        <div className="text-center">
-          <p className="font-display text-lg font-extrabold text-ink">{stats?.wins ?? 0}</p>
-          <p className="text-xs font-bold uppercase tracking-wider text-ink-mute">Wins</p>
-        </div>
-        <div className="text-center">
-          <p className="font-display text-lg font-extrabold text-ink">{stats?.cards ?? 0}</p>
-          <p className="text-xs font-bold uppercase tracking-wider text-ink-mute">Cards</p>
-        </div>
-      </div>
-      <div className="mt-4 flex w-full justify-center gap-2">
-        <FollowButton userId={user.id} />
-        <Link
-          to={`/u/${user.username}`}
-          className="rounded-full border border-line bg-white px-5 py-2 font-display text-base font-bold text-ink-soft transition hover:border-brand-violet hover:text-brand-violet"
-        >
-          View
+        <Link to={`/u/${user.username}`} className="mt-3 block">
+          <h3 className="truncate font-display text-xl font-extrabold text-ink hover:text-brand-violet">
+            {user.displayName}
+          </h3>
+          <p className="text-sm font-bold text-ink-mute">{handle(user.username)}</p>
         </Link>
+        {user.bio && <p className="mt-2 text-sm font-semibold text-ink-soft">{user.bio}</p>}
+
+        <dl className="mt-4 grid grid-cols-3 gap-2 text-center">
+          <div className="rounded-2xl border-2 border-ink bg-white px-2 py-2">
+            <dt className="text-[10px] font-extrabold uppercase tracking-wider text-ink-mute">Cards</dt>
+            <dd className="font-display text-lg font-extrabold text-ink">{stats.cards}</dd>
+          </div>
+          <div className="rounded-2xl border-2 border-ink bg-white px-2 py-2">
+            <dt className="text-[10px] font-extrabold uppercase tracking-wider text-ink-mute">Wins</dt>
+            <dd className="font-display text-lg font-extrabold text-ink">{stats.wins}</dd>
+          </div>
+          <div className="rounded-2xl border-2 border-ink bg-white px-2 py-2">
+            <dt className="text-[10px] font-extrabold uppercase tracking-wider text-ink-mute">Likes</dt>
+            <dd className="font-display text-lg font-extrabold text-ink">{formatCount(stats.likesReceived)}</dd>
+          </div>
+        </dl>
+
+        <div className="mt-4 flex flex-wrap gap-2">
+          <Link
+            to={`/u/${user.username}`}
+            className="inline-flex min-h-[44px] flex-1 items-center justify-center rounded-full border-2 border-ink bg-white px-4 py-2 font-grotesk text-sm font-bold text-ink transition hover:border-brand-cyan"
+          >
+            View Profile
+          </Link>
+          {challengeable ? (
+            myCard ? (
+              <button
+                type="button"
+                onClick={challenge}
+                className="btn-violet inline-flex min-h-[44px] flex-1 items-center justify-center gap-1.5 rounded-full px-4 py-2 font-grotesk text-sm font-bold"
+              >
+                <Swords size={15} aria-hidden="true" /> Challenge
+              </button>
+            ) : (
+              <Link
+                to="/create"
+                title="Create a card first"
+                className="btn-violet inline-flex min-h-[44px] flex-1 items-center justify-center gap-1.5 rounded-full px-4 py-2 font-grotesk text-sm font-bold"
+              >
+                <Swords size={15} aria-hidden="true" /> Challenge
+              </Link>
+            )
+          ) : (
+            !me && (
+              <Link
+                to="/signin"
+                className="btn-violet inline-flex min-h-[44px] flex-1 items-center justify-center gap-1.5 rounded-full px-4 py-2 font-grotesk text-sm font-bold"
+              >
+                <Swords size={15} aria-hidden="true" /> Challenge
+              </Link>
+            )
+          )}
+        </div>
+        <div className="mt-3">
+          <FollowButton userId={user.id} />
+        </div>
       </div>
-    </div>
+    </article>
   );
 }
 
@@ -71,171 +143,146 @@ export default function Discover() {
   const navigate = useNavigate();
   const [tab, setTab] = useState<DiscoverTab>('all');
   const [q, setQ] = useState('');
+  const me = sessionUser(sg.state);
 
-  const submitSearch = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!q.trim()) return;
-    navigate(`/search?q=${encodeURIComponent(q.trim())}`);
-  };
+  const featuredRows = leaderboard(sg.state, 'daily').slice(0, 4);
+  const featured = [
+    ...sg.state.featured
+      .map((id) => sg.state.users.find((u) => u.id === id))
+      .filter((u): u is User => !!u),
+    ...featuredRows.map((r) => r.user),
+  ].filter((u, i, arr) => arr.findIndex((x) => x.id === u.id) === i);
 
-  const featured = leaderboard(sg.state, 'daily').slice(0, 4);
-  const newUsers = [...sg.state.users]
-    .sort((a, b) => +new Date(b.joinedAt) - +new Date(a.joinedAt))
-    .slice(0, 8);
+  const allUsers = [...sg.state.users].sort((a, b) => b.points - a.points);
+  const newUsers = [...sg.state.users].sort((a, b) => +new Date(b.joinedAt) - +new Date(a.joinedAt));
+  const mostLiked = leaderboard(sg.state, 'most-liked');
+  const topCreators = leaderboard(sg.state, 'weekly');
   const cards = trendingCards(sg.state, 12);
 
+  const list =
+    tab === 'new'
+      ? newUsers
+      : tab === 'liked'
+        ? mostLiked.map((r) => r.user)
+        : tab === 'creators'
+          ? topCreators.map((r) => r.user)
+          : allUsers;
+
   return (
-    <>
+    <div className="mx-auto max-w-6xl px-4 py-8">
       <Seo
-        title="Discover Snapchatters · Snap Glow"
-        description="Find Snapchat creators, explore trending flex and streak cards, and join the Snap Glow community."
+        title="Discover Snapchat Creators · Snap Glow"
+        description="Browse and discover Snap Glow creators — flex cards, streak cards, vote battles and leaderboards for the Snapchat community."
         path="/discover"
-        noindex={false}
-      />
-      <PageHeader
-        eyebrow="Community"
-        title="Discover Amazing Snapchatters"
-        sub="Find Snapchat creators, explore trending flex and streak cards, and join the community."
       />
 
-      {/* Search row */}
-      <form onSubmit={submitSearch} className="mb-6 flex gap-3" role="search">
-        <label htmlFor="discover-search" className="sr-only">
-          Search Snap Glow
-        </label>
+      <PageHeader
+        eyebrow="Discover"
+        title="Find your people"
+        sub="Every public creator on Snap Glow — follow them, like their profiles, challenge them to battles."
+      />
+
+      <form
+        className="mt-6 flex gap-2"
+        role="search"
+        onSubmit={(e) => {
+          e.preventDefault();
+          navigate(`/search?q=${encodeURIComponent(q)}`);
+        }}
+      >
         <input
-          id="discover-search"
-          type="search"
           value={q}
           onChange={(e) => setQ(e.target.value)}
           placeholder="Search creators, cards, posts…"
-          className="w-full rounded-2xl border-2 border-line bg-white px-4 py-3 text-base font-semibold text-ink placeholder:text-ink-mute/70 focus:border-brand-cyan focus:outline-none"
+          aria-label="Search creators"
+          className="min-h-[48px] w-full rounded-full border-2 border-ink bg-white px-5 font-grotesk font-bold text-ink placeholder:text-ink-mute"
         />
-        <button type="submit" className="btn-cta inline-flex items-center gap-2 rounded-full px-6 py-3 font-display text-base font-bold">
-          <Search size={18} aria-hidden="true" /> Search
+        <button type="submit" className="btn-cta inline-flex min-h-[48px] items-center gap-2 rounded-full px-6 font-display font-bold">
+          <SearchIcon size={17} aria-hidden="true" /> Search
         </button>
       </form>
 
-      <div className="mb-6">
+      <div className="my-8">
         <AdSlot slot="discover-hero-bottom" />
       </div>
 
-      <Tabs tabs={TABS} active={tab} onChange={setTab} ariaLabel="Discover filters" />
-
-      {/* Featured creators — always visible */}
-      <section className="mt-10">
-        <h2 className="font-display mb-1 text-3xl font-extrabold tracking-tight text-ink">Featured Creators</h2>
-  
+      <section className="mb-10">
+        <SectionTitle title="Featured creators" sub="Spotlight picks and today's hottest accounts." />
         {featured.length === 0 ? (
-          <p className="rounded-2xl border border-dashed border-line bg-white/60 p-6 text-center text-sm font-semibold text-ink-mute">
-            No creators yet — be the first to join and claim a featured spot.
-          </p>
+          <EmptyState
+            icon={Sparkles}
+            title="No featured creators yet"
+            body="Featured spots fill as the community grows — earn Glow Points to claim one."
+          />
         ) : (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            {featured.map((row) => (
-              <CreatorCard key={row.user.id} userId={row.user.id} />
+          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
+            {featured.slice(0, 4).map((u) => (
+              <CreatorCard key={u.id} user={u} challengeable={!!me && me.id !== u.id} />
             ))}
           </div>
         )}
       </section>
 
-      {/* Tab-controlled content */}
-      <section className="mt-10">
-        {tab === 'all' && (
-          <>
-            <h2 className="font-display mb-4 text-3xl font-extrabold tracking-tight text-ink">All Creators</h2>
-                        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              {sg.state.users.slice(0, 8).map((u) => (
-                <CreatorCard key={u.id} userId={u.id} />
-              ))}
-            </div>
-          </>
-        )}
+      <Tabs tabs={TABS} active={tab} onChange={setTab} ariaLabel="Discover filters" />
 
-        {tab === 'trending' && (
-          <>
-            <h2 className="font-display mb-1 text-3xl font-extrabold tracking-tight text-ink">Trending Now</h2>
-                        <CardGrid cards={cards} />
-          </>
-        )}
-
-        {tab === 'new' && (
-          <>
-            <h2 className="font-display mb-1 text-3xl font-extrabold tracking-tight text-ink">Fresh Faces</h2>
-                        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              {newUsers.map((u) => (
-                <CreatorCard key={u.id} userId={u.id} />
-              ))}
-            </div>
-          </>
-        )}
-
-        {tab === 'liked' && (
-          <>
-            <h2 className="font-display mb-1 text-3xl font-extrabold tracking-tight text-ink">Most Liked Cards</h2>
-                        <CardGrid cards={cards} />
-          </>
-        )}
-
-        {tab === 'creators' && (
-          <>
-            <h2 className="font-display mb-1 text-3xl font-extrabold tracking-tight text-ink">Top Creators</h2>
-                        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              {featured.map((row) => (
-                <CreatorCard key={row.user.id} userId={row.user.id} />
-              ))}
-            </div>
-          </>
+      <section className="mt-6">
+        {list.length === 0 ? (
+          <EmptyState
+            icon={Compass}
+            title="No creators yet"
+            body="Be the first! Create an account and claim your featured spot."
+            action={<CtaButton to="/signin">Join free</CtaButton>}
+          />
+        ) : (
+          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+            {list.slice(0, 24).map((u) => (
+              <CreatorCard key={u.id} user={u} challengeable={!!me && me.id !== u.id} />
+            ))}
+          </div>
         )}
       </section>
 
-      {/* Trending cards grid — always visible below */}
       <section className="mt-12">
-        <h2 className="font-display mb-1 text-3xl font-extrabold tracking-tight text-ink">Trending Cards</h2>
-
+        <SectionTitle title="Trending cards" sub="The most-loved flex cards right now." />
         {cards.length === 0 ? (
           <EmptyState
             icon={TrendingUp}
             title="No trending cards yet"
-            body="Trending cards will appear here once the community starts sharing."
+            body="Published cards land here as they collect likes."
+            action={<CtaButton to="/create">Create the first card</CtaButton>}
           />
         ) : (
-          <CardGrid cards={cards.slice(0, 8)} />
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+            {cards.slice(0, 8).map((card) => {
+              const owner = getUser(sg.state, card.ownerId);
+              if (!owner) return null;
+              return (
+                <Link key={card.id} to={`/cards/${card.id}`} aria-label={`Open card “${card.title}”`}>
+                  <FlexCard card={card} owner={owner} className="transition hover:opacity-95" />
+                </Link>
+              );
+            })}
+          </div>
         )}
-        <p className="mt-6 flex items-center justify-center gap-2 text-sm text-ink-mute">
-          <Sparkles size={16} aria-hidden="true" /> Looking for battles? Head to the{' '}
-          <Link to="/battles" className="font-bold text-brand-violet underline">
-            Vote Battles
-          </Link>
-          .
-        </p>
       </section>
-    </>
-  );
-}
 
-function CardGrid({ cards }: { cards: ReturnType<typeof trendingCards> }) {
-  const sg = useSnapGlow();
-  if (cards.length === 0) {
-    return (
-      <EmptyState
-        icon={TrendingUp}
-        title="Nothing here yet"
-        body="Cards will show up once the community starts creating."
-      />
-    );
-  }
-  return (
-    <div className="grid grid-cols-2 gap-4 sm:gap-5 lg:grid-cols-4">
-      {cards.map((card) => {
-        const owner = getUser(sg.state, card.ownerId);
-        if (!owner) return null;
-        return (
-          <Link key={card.id} to={`/cards/${card.id}`} className="transition hover:-translate-y-1">
-            <FlexCard card={card} owner={owner} className="shadow-soft hover:shadow-lift" />
+      <section className="mt-12 rounded-card border-2 border-ink bg-sun p-6 text-center shadow-lift">
+        <p className="font-display text-2xl font-extrabold text-ink">
+          <Flame className="mr-2 inline" size={24} aria-hidden="true" /> Think you can climb higher?
+        </p>
+        <p className="mt-2 text-sm font-bold text-ink-soft">
+          Create cards, win battles, collect likes — the weekly board resets, so anyone can rise.
+        </p>
+        <div className="mt-4 flex flex-wrap justify-center gap-3">
+          <CtaButton to="/create">Create a card</CtaButton>
+          <Link
+            to="/leaderboards"
+            className="inline-flex min-h-[44px] items-center rounded-full border-2 border-ink bg-white px-5 py-2 font-grotesk font-bold text-ink"
+          >
+            View leaderboards
           </Link>
-        );
-      })}
+        </div>
+      </section>
     </div>
   );
 }

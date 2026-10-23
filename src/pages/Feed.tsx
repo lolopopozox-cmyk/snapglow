@@ -28,8 +28,8 @@ export default function Feed() {
   const me = sessionUser(sg.state);
   const posts = feedPosts(sg.state, filter);
 
-  const submit = () => {
-    const res = sg.createPost(text);
+  const submit = async () => {
+    const res = await sg.createPost(text);
     toast(res.message);
     if (res.ok) setText('');
   };

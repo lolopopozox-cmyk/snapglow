@@ -93,17 +93,23 @@ export function Reveal({
   );
 }
 
-/* ── Avatar: flat vivid initial disc with ink border (no external images) ── */
+/* ── Avatar: photo / emoji persona / vivid initial disc with ink border ── */
 export function Avatar({
   name,
   hue,
   size = 40,
   ring = false,
+  src,
+  emoji,
 }: {
   name: string;
   hue: number;
   size?: number;
   ring?: boolean;
+  /** uploaded photo (data URL or public storage URL) */
+  src?: string;
+  /** emoji persona, shown instead of initials when no photo */
+  emoji?: string;
 }) {
   const initials = name
     .split(/\s+/)
@@ -115,7 +121,7 @@ export function Avatar({
     <span
       aria-hidden="true"
       title={name}
-      className={`grid shrink-0 select-none place-items-center rounded-full border-2 border-ink font-grotesk font-bold text-white ${ring ? 'shadow-pop' : ''}`}
+      className={`grid shrink-0 select-none place-items-center overflow-hidden rounded-full border-2 border-ink font-grotesk font-bold text-white ${ring ? 'shadow-pop' : ''}`}
       style={{
         width: size,
         height: size,
@@ -124,7 +130,13 @@ export function Avatar({
         textShadow: '0 1px 3px rgba(0,0,0,.3)',
       }}
     >
-      {initials}
+      {src ? (
+        <img src={src} alt="" className="h-full w-full object-cover" loading="lazy" />
+      ) : emoji ? (
+        <span style={{ fontSize: size * 0.5 }}>{emoji}</span>
+      ) : (
+        initials
+      )}
     </span>
   );
 }
@@ -203,7 +215,7 @@ export function FlexCard({
         <div className="flex flex-1 flex-col items-center justify-end pb-2 text-center">
           <Avatar name={owner.displayName} hue={owner.hue} size={64} ring />
           <h3
-            className="font-display mt-2.5 text-[1.65rem] font-bold leading-[1.1] tracking-tight"
+            className="font-display mt-2.5 text-lg font-bold leading-[1.1] tracking-tight sm:text-[1.65rem]"
             style={{ color: t.ink, textShadow: '0 2px 12px rgba(0,0,0,.4)' }}
           >
             {card.title}
@@ -259,7 +271,7 @@ export function ShowcaseCard({
         </div>
         <div className="flex flex-1 flex-col items-center justify-end pb-2 text-center">
           <h3
-            className="font-display text-[1.65rem] font-bold leading-[1.1] tracking-tight"
+            className="font-display text-lg font-bold leading-[1.1] tracking-tight sm:text-[1.65rem]"
             style={{ color: t.ink, textShadow: '0 2px 12px rgba(0,0,0,.4)' }}
           >
             {title}
@@ -634,8 +646,8 @@ export function ReportButton({
   const [reason, setReason] = useState(REPORT_REASONS[0]);
   const [details, setDetails] = useState('');
   const { toast } = useToast();
-  const submit = () => {
-    const res = api.reportContent(targetType, targetId, reason, details);
+  const submit = async () => {
+    const res = await api.reportContent(targetType, targetId, reason, details);
     toast(res.message);
     if (res.ok) {
       setOpen(false);
@@ -865,8 +877,7 @@ export function FollowButton({ userId }: { userId: string }) {
           toast('Create a free account to follow creators.');
           return;
         }
-        const res = sg.toggleFollow(userId);
-        toast(res.message);
+        void sg.toggleFollow(userId).then((res) => toast(res.message));
       }}
       aria-pressed={following}
       className={`rounded-full px-5 py-2 font-display text-base font-bold transition ${

@@ -29,7 +29,6 @@ const COLS: Array<{ title: string; links: Array<{ to: string; label: string }> }
       { to: '/privacy', label: 'Privacy Policy' },
       { to: '/terms', label: 'Terms of Service' },
       { to: '/contact', label: 'Contact' },
-      { to: '/admin', label: 'Admin / moderation setup' },
     ],
   },
 ];

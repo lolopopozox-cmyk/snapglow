@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -7,6 +7,7 @@ import {
   Check,
   Download,
   Image as ImageIcon,
+  Lock,
   RefreshCw,
   Sparkles,
   Trash2,
@@ -15,8 +16,6 @@ import {
 } from 'lucide-react';
 import { Seo } from '../components/Seo';
 import {
-  Avatar,
-  CardArt,
   CtaButton,
   GatePrompt,
   GhostButton,
@@ -27,97 +26,60 @@ import {
 } from '../components/ui';
 import { useToast } from '../components/Toast';
 import { sessionUser, useSnapGlow } from '../lib/store';
-import { TEMPLATES, templateById, BADGES, badgeEmoji } from '../lib/templates';
-import { downloadCardPng, type ExportSize } from '../lib/renderCard';
-import { challengeForDay, POINTS } from '../lib/challenges';
+import { BADGES } from '../lib/templates';
+import { CARD_THEMES, themeById, themeUnlocked } from '../lib/cardThemes';
+import { downloadCardPng, renderCardToCanvas, type ExportSize } from '../lib/renderCard';
+import { challengeForDay, POINTS, levelForPoints } from '../lib/challenges';
 import type { FlexCardData, User } from '../lib/types';
 
 const MAX_BYTES = 5 * 1024 * 1024;
 const OK_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 
-const TINTS = [
-  { id: 'white', label: 'White', hex: '#FFFFFF' },
-  { id: 'cream', label: 'Cream', hex: '#FFFBF4' },
-  { id: 'lavender', label: 'Lavender', hex: '#F7F4FF' },
-  { id: 'mint', label: 'Mint', hex: '#F1FDF7' },
-  { id: 'cyan', label: 'Cyan', hex: '#EFFBFF' },
-  { id: 'blush', label: 'Blush', hex: '#FFF3F7' },
-];
+const STEPS = ['Add Photo', 'Customize', 'Preview', 'Publish'];
 
-const STEPS = ['Upload Image', 'Customize', 'Preview', 'Publish'];
-
-/* ── Live preview (mirrors FlexCard styling) ──────────────────── */
-function PreviewCard({
-  title,
-  username,
-  streak,
-  streakLabel,
-  templateId,
-  badges,
-  tint,
-  photo,
+/* ── WYSIWYG canvas preview — the exact exported image ───────── */
+function CanvasPreview({
+  card,
+  owner,
+  size,
 }: {
-  title: string;
-  username: string;
-  streak: number;
-  streakLabel: string;
-  templateId: string;
-  badges: string[];
-  tint: string;
-  photo: string | null;
+  card: FlexCardData;
+  owner: User;
+  size: ExportSize;
 }) {
-  const t = templateById(templateId);
+  const ref = useRef<HTMLCanvasElement>(null);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    const canvas = ref.current;
+    if (!canvas) return;
+    renderCardToCanvas(canvas, card, owner, size)
+      .then(() => {
+        if (!cancelled) setError('');
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : 'Preview failed');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [card, owner, size]);
+
   return (
-    <div className="rounded-3xl border border-line p-5" style={{ background: tint }}>
-      <div className="relative mx-auto aspect-[3/4] w-full max-w-sm overflow-hidden rounded-3xl shadow-lift">
-        <CardArt
-          templateId={templateId}
-          seed="draft-seed"
-          label={`“${t.name}” template preview`}
-          className="absolute inset-0 h-full w-full"
-        />
-        {photo && (
-          <img
-            src={photo}
-            alt="Your uploaded photo"
-            className="absolute inset-x-6 top-6 h-[46%] w-[calc(100%-3rem)] rounded-2xl object-cover shadow-lift"
-          />
-        )}
-        <div
-          className="absolute inset-0"
-          style={{ background: 'linear-gradient(180deg, rgba(0,0,0,0.06) 40%, rgba(0,0,0,0.42) 100%)' }}
-          aria-hidden="true"
-        />
-        <div className="absolute inset-0 flex flex-col p-4">
-          <div className="flex items-center justify-between">
-            <span className="inline-flex items-center gap-1 rounded-full bg-black/30 px-2.5 py-1 text-xs font-extrabold text-white">
-              <span aria-hidden="true">🔥</span> {streak}
-              {streakLabel.trim() ? ` · ${streakLabel.trim()}` : ''}
-            </span>
-          </div>
-          <div className="flex flex-1 flex-col items-center justify-end pb-2 text-center">
-            <Avatar name={title || 'You'} hue={160} size={64} ring />
-            <p
-              className="font-display mt-2 text-2xl font-extrabold leading-tight"
-              style={{ color: t.ink, textShadow: '0 2px 10px rgba(0,0,0,.35)' }}
-            >
-              {title || 'Your name'}
-            </p>
-            <p className="text-sm font-bold" style={{ color: t.sub }}>
-              @{username || 'you'}
-            </p>
-            {badges.length > 0 && (
-              <div className="mt-1.5 flex items-center gap-1.5 text-lg" aria-label={`Badges: ${badges.join(', ')}`}>
-                {badges.map((b) => (
-                  <span key={b} aria-hidden="true">
-                    {badgeEmoji(b)}
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
+    <div className="rounded-3xl border border-line bg-white p-4">
+      <canvas
+        ref={ref}
+        role="img"
+        aria-label="Live card preview — exactly what gets downloaded"
+        className={`mx-auto w-full max-w-sm rounded-2xl shadow-lift ${
+          size === 'story' ? 'aspect-[9/16]' : 'aspect-[4/5]'
+        } object-contain`}
+      />
+      {error && <p className="mt-2 text-center text-sm font-bold text-brand-pink">{error}</p>}
+      <p className="mt-3 text-center text-xs font-bold text-ink-mute">
+        This preview is rendered by the same engine as the exported PNG — what you see is what you get.
+      </p>
     </div>
   );
 }
@@ -146,21 +108,29 @@ export default function Create() {
   const fileRef = useRef<HTMLInputElement>(null);
   const me = sessionUser(sg.state);
   const challenge = challengeForDay();
+  const myLevel = levelForPoints(me?.points ?? 0);
 
   const [step, setStep] = useState(1);
   const [photo, setPhoto] = useState<string | null>(null);
-  const [useArt, setUseArt] = useState(false);
   const [error, setError] = useState('');
   const [caption, setCaption] = useState('');
   const [streak, setStreak] = useState(0);
   const [streakLabel, setStreakLabel] = useState('');
-  const [templateId, setTemplateId] = useState('neon-flex');
+  const [templateId, setTemplateId] = useState('neon-identity');
   const [badges, setBadges] = useState<string[]>([]);
-  const [tint, setTint] = useState(TINTS[0].hex);
   const [forChallenge, setForChallenge] = useState(false);
   const [exportSize, setExportSize] = useState<ExportSize>('feed');
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState('');
+
+  const myPoints = me?.points ?? 0;
+  // keep the selected theme valid for the user's level (before the sign-in
+  // early return — hooks must run on every render)
+  useEffect(() => {
+    if (!themeUnlocked(themeById(templateId), myPoints)) {
+      setTemplateId('neon-identity');
+    }
+  }, [myPoints, templateId]);
 
   if (!me) {
     return (
@@ -176,28 +146,6 @@ export default function Create() {
       </>
     );
   }
-
-  const canNext = step === 1 ? !!photo || useArt : true;
-
-  const handleFile = (file: File | undefined) => {
-    if (!file) return;
-    if (!OK_TYPES.includes(file.type)) {
-      setError('Please choose a JPEG, PNG, WebP or GIF image.');
-      return;
-    }
-    if (file.size > MAX_BYTES) {
-      setError('That file is over 5MB — pick a smaller image.');
-      return;
-    }
-    setError('');
-    const reader = new FileReader();
-    reader.onload = () => {
-      setPhoto(typeof reader.result === 'string' ? reader.result : null);
-      setUseArt(false);
-    };
-    reader.onerror = () => setError('Could not read that file — try another image.');
-    reader.readAsDataURL(file);
-  };
 
   const draftCard = (): { card: FlexCardData; owner: User } => ({
     card: {
@@ -220,6 +168,25 @@ export default function Create() {
     owner: me,
   });
 
+  const handleFile = (file: File | undefined) => {
+    if (!file) return;
+    if (!OK_TYPES.includes(file.type)) {
+      setError('Please choose a JPEG, PNG, WebP or GIF image.');
+      return;
+    }
+    if (file.size > MAX_BYTES) {
+      setError('That file is over 5MB — pick a smaller image.');
+      return;
+    }
+    setError('');
+    const reader = new FileReader();
+    reader.onload = () => {
+      setPhoto(typeof reader.result === 'string' ? reader.result : null);
+    };
+    reader.onerror = () => setError('Could not read that file — try another image.');
+    reader.readAsDataURL(file);
+  };
+
   const handleDownload = async () => {
     const { card, owner } = draftCard();
     setDownloading(true);
@@ -238,8 +205,8 @@ export default function Create() {
     }
   };
 
-  const handlePublish = () => {
-    const res = sg.publishCard({
+  const handlePublish = async () => {
+    const res = await sg.publishCard({
       title: me.displayName,
       caption: caption.trim(),
       template: templateId,
@@ -257,15 +224,17 @@ export default function Create() {
   const toggleBadge = (id: string) =>
     setBadges((prev) => (prev.includes(id) ? prev.filter((b) => b !== id) : [...prev, id]));
 
+  const theme = themeById(templateId);
+
   return (
     <>
       <Seo
         title="Create Your Flex Card · Snap Glow"
-        description="Upload a photo, pick a template, preview and download your flex profile card — sized for Snapchat Stories."
+        description="Upload a photo, pick a premium theme, preview and download your flex profile card — sized for Snapchat Stories."
         path="/create"
         noindex
       />
-      <PageHeader eyebrow="Card studio" title="Create Your Flex Card" sub="Design a flex or streak card in four steps — download it for your Snapchat Story or publish it to the feed.">
+      <PageHeader eyebrow="Card studio" title="Create Your Flex Card" sub="Design a premium flex or streak card in four steps — download it for your Snapchat Story or publish it to the feed.">
         <GhostButton to="/feed">Back to feed</GhostButton>
       </PageHeader>
 
@@ -273,10 +242,14 @@ export default function Create() {
         <Stepper steps={STEPS} current={step} />
       </div>
 
-      {/* ── Step 1: upload ─────────────────────────────────── */}
+      {/* ── Step 1: photo ──────────────────────────────────── */}
       {step === 1 && (
-        <section aria-label="Step 1: upload image" className="mx-auto max-w-2xl">
-          <h2 className="font-display mb-4 text-2xl font-extrabold text-ink">Upload Image</h2>
+        <section aria-label="Step 1: add photo" className="mx-auto max-w-2xl">
+          <h2 className="font-display mb-2 text-2xl font-extrabold text-ink">Add Your Photo</h2>
+          <p className="mb-4 text-sm font-semibold text-ink-soft">
+            Your Snapchat profile picture works great. No photo? We&apos;ll use your avatar or initials —
+            every card stays centered on you.
+          </p>
           <input
             ref={fileRef}
             type="file"
@@ -285,7 +258,7 @@ export default function Create() {
             aria-label="Choose an image file"
             onChange={(e) => handleFile(e.target.files?.[0])}
           />
-          {!photo && !useArt ? (
+          {!photo ? (
             <>
               <button
                 type="button"
@@ -302,41 +275,25 @@ export default function Create() {
                 </span>
                 <span className="font-display text-xl font-extrabold text-ink">Drop a photo here, or click to browse</span>
                 <span className="text-sm font-semibold text-ink-mute">
-                  JPEG, PNG, WebP or GIF · up to 5MB · your photo stays in this browser
+                  JPEG, PNG, WebP or GIF · up to 5MB · your photo stays yours
                 </span>
               </button>
-              <div className="my-5 flex items-center gap-3" aria-hidden="true">
-                <span className="h-px flex-1 bg-line" />
-                <span className="text-sm font-bold text-ink-mute">or</span>
-                <span className="h-px flex-1 bg-line" />
-              </div>
-              <div className="text-center">
-                <GhostButton
-                  onClick={() => {
-                    setUseArt(true);
-                    setPhoto(null);
-                    setError('');
-                  }}
-                >
-                  <Sparkles size={18} aria-hidden="true" /> Use template art instead
-                </GhostButton>
-              </div>
+              {error && (
+                <p role="alert" className="mt-4 rounded-2xl bg-blush px-4 py-3 text-sm font-bold text-ink">
+                  {error}
+                </p>
+              )}
+              <p className="mt-5 text-center text-sm font-semibold text-ink-mute">
+                You can continue without a photo and add it anytime.
+              </p>
             </>
           ) : (
             <div className="card-surface flex flex-col items-center gap-4 rounded-card p-6 sm:flex-row">
-              {photo ? (
-                <img src={photo} alt="Your uploaded photo" className="h-40 w-40 rounded-2xl object-cover shadow-lift" />
-              ) : (
-                <div className="h-40 w-40 overflow-hidden rounded-2xl" aria-label="Template art selected">
-                  <CardArt templateId={templateId} seed="draft-seed" label="Template art" className="h-full w-full" />
-                </div>
-              )}
+              <img src={photo} alt="Your uploaded photo" className="h-40 w-40 rounded-full border-4 border-ink object-cover shadow-lift" />
               <div className="text-center sm:text-left">
-                <p className="font-display text-lg font-extrabold text-ink">
-                  {photo ? 'Photo ready' : 'Template art selected'}
-                </p>
+                <p className="font-display text-lg font-extrabold text-ink">Photo ready 🎉</p>
                 <p className="mt-1 text-sm text-ink-mute">
-                  {photo ? 'This is the photo that will appear on your card.' : 'The template artwork will appear on your card instead of a photo.'}
+                  It will be cropped into a treated circular portrait on your card — always fully visible.
                 </p>
                 <div className="mt-3 flex flex-wrap justify-center gap-2 sm:justify-start">
                   <button
@@ -348,11 +305,7 @@ export default function Create() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => {
-                      setPhoto(null);
-                      setUseArt(false);
-                      setError('');
-                    }}
+                    onClick={() => setPhoto(null)}
                     className="inline-flex items-center gap-1.5 rounded-full border border-line bg-white px-4 py-2 text-sm font-extrabold text-ink hover:border-brand-pink hover:text-brand-pink"
                   >
                     <Trash2 size={15} aria-hidden="true" /> Remove
@@ -360,11 +313,6 @@ export default function Create() {
                 </div>
               </div>
             </div>
-          )}
-          {error && (
-            <p role="alert" className="mt-4 rounded-2xl bg-blush px-4 py-3 text-sm font-bold text-ink">
-              {error}
-            </p>
           )}
         </section>
       )}
@@ -379,6 +327,9 @@ export default function Create() {
                 <p className="text-sm font-extrabold text-ink">Creating as</p>
                 <p className="mt-0.5 text-sm font-semibold text-ink-soft">
                   {me.displayName} <span className="text-ink-mute">@{me.username}</span>
+                  <span className="ml-2 rounded-full bg-lav px-2.5 py-0.5 text-xs font-extrabold text-brand-violet">
+                    {myLevel.name}
+                  </span>
                 </p>
               </div>
               <div>
@@ -422,7 +373,7 @@ export default function Create() {
                       type="button"
                       aria-pressed={badges.includes(b.id)}
                       onClick={() => toggleBadge(b.id)}
-                      className={`inline-flex items-center gap-1.5 rounded-full border-2 px-4 py-2 text-sm font-extrabold transition ${
+                      className={`inline-flex min-h-[44px] items-center gap-1.5 rounded-full border-2 px-4 py-2 text-sm font-extrabold transition ${
                         badges.includes(b.id)
                           ? 'border-brand-violet bg-lav text-ink'
                           : 'border-line bg-white text-ink-soft hover:border-brand-cyan'
@@ -462,61 +413,58 @@ export default function Create() {
               </button>
             </div>
             <div>
-              <p className="mb-1.5 block text-sm font-extrabold text-ink" id="template-picker-label">
-                Choose Template
+              <p className="mb-1.5 block text-sm font-extrabold text-ink" id="theme-picker-label">
+                Card Theme
               </p>
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3" role="radiogroup" aria-labelledby="template-picker-label">
-                {TEMPLATES.map((t) => (
-                  <button
-                    key={t.id}
-                    type="button"
-                    role="radio"
-                    aria-checked={templateId === t.id}
-                    aria-label={t.name}
-                    onClick={() => setTemplateId(t.id)}
-                    className={`rounded-2xl border-2 p-2 text-left transition ${
-                      templateId === t.id
-                        ? 'border-brand-violet bg-white shadow-soft'
-                        : 'border-line bg-white hover:border-brand-cyan'
-                    }`}
-                  >
-                    <CardArt templateId={t.id} seed={t.id} label={`${t.name} preview`} className="h-24 w-full rounded-xl" />
-                    <p className="mt-1.5 text-center text-sm font-extrabold text-ink">{t.name}</p>
-                  </button>
-                ))}
-              </div>
-              <div className="mt-5">
-                <p className="mb-1.5 block text-sm font-extrabold text-ink" id="tint-picker-label">
-                  Background Tint
-                </p>
-                <div className="flex flex-wrap gap-2" role="group" aria-labelledby="tint-picker-label">
-                  {TINTS.map((tintOpt) => (
+              <div className="grid grid-cols-2 gap-3" role="radiogroup" aria-labelledby="theme-picker-label">
+                {CARD_THEMES.map((t) => {
+                  const unlocked = themeUnlocked(t, me.points);
+                  const selected = templateId === t.id;
+                  return (
                     <button
-                      key={tintOpt.id}
+                      key={t.id}
                       type="button"
-                      aria-pressed={tint === tintOpt.hex}
-                      aria-label={tintOpt.label}
-                      title={tintOpt.label}
-                      onClick={() => setTint(tintOpt.hex)}
-                      className={`h-10 w-10 rounded-full border-2 transition ${
-                        tint === tintOpt.hex ? 'border-brand-violet ring-2 ring-brand-violet/30' : 'border-line'
+                      role="radio"
+                      aria-checked={selected}
+                      aria-label={unlocked ? t.name : `${t.name} — unlocks at ${levelForPoints(t.minPoints).name}`}
+                      disabled={!unlocked}
+                      onClick={() => unlocked && setTemplateId(t.id)}
+                      className={`relative overflow-hidden rounded-2xl border-2 p-3 text-left transition ${
+                        selected
+                          ? 'border-brand-violet shadow-soft ring-2 ring-brand-violet/20'
+                          : unlocked
+                            ? 'border-line hover:border-brand-cyan'
+                            : 'cursor-not-allowed border-line opacity-70'
                       }`}
-                      style={{ background: tintOpt.hex }}
-                    />
-                  ))}
-                </div>
+                      style={{ background: `linear-gradient(135deg, ${t.bg[0]}, ${t.bg[1]} 55%, ${t.bg[2]})` }}
+                    >
+                      <span className="text-2xl" aria-hidden="true">{t.vibe}</span>
+                      <span className="mt-1 block font-display text-sm font-extrabold" style={{ color: t.ink }}>
+                        {t.name}
+                      </span>
+                      <span className="mt-0.5 block text-[11px] font-semibold leading-snug" style={{ color: t.sub }}>
+                        {t.blurb}
+                      </span>
+                      {!unlocked && (
+                        <span className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-full bg-ink/85 px-2 py-1 text-[10px] font-extrabold text-sun">
+                          <Lock size={10} aria-hidden="true" /> {levelForPoints(t.minPoints).name}
+                        </span>
+                      )}
+                      {selected && (
+                        <span className="absolute inset-x-3 bottom-2 rounded-full bg-sun px-2 py-0.5 text-center text-[10px] font-extrabold text-ink">
+                          Selected
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
-              <div className="mt-6">
-                <PreviewCard
-                  title={me.displayName}
-                  username={me.username}
-                  streak={streak}
-                  streakLabel={streakLabel}
-                  templateId={templateId}
-                  badges={badges}
-                  tint={tint}
-                  photo={photo}
-                />
+              <p className="mt-2 text-xs font-semibold text-ink-mute">
+                Earn Glow Points to unlock Streak Legend, Cosmic Profile, Elite Flex and Champion
+                Edition themes.
+              </p>
+              <div className="mt-5">
+                <CanvasPreview card={draftCard().card} owner={me} size="feed" />
               </div>
             </div>
           </div>
@@ -528,26 +476,17 @@ export default function Create() {
         <section aria-label="Step 3: preview">
           <h2 className="font-display mb-4 text-2xl font-extrabold text-ink">Preview</h2>
           <div className="grid items-start gap-8 lg:grid-cols-[1fr_1fr]">
-            <PreviewCard
-              title={me.displayName}
-              username={me.username}
-              streak={streak}
-              streakLabel={streakLabel}
-              templateId={templateId}
-              badges={badges}
-              tint={tint}
-              photo={photo}
-            />
+            <CanvasPreview card={draftCard().card} owner={me} size={exportSize} />
             <div className="card-surface rounded-card p-6">
               <h3 className="font-display text-xl font-extrabold text-ink">Your card checklist</h3>
               <ul className="mt-4 space-y-4">
                 <CheckItem
-                  ok={!!photo || useArt}
-                  label="Image"
-                  detail={photo ? 'Your uploaded photo' : 'Template art'}
+                  ok={!!photo || !!me.avatar}
+                  label="Portrait"
+                  detail={photo ? 'Your uploaded photo' : me.avatar ? 'Your profile avatar' : 'Initials monogram'}
                 />
                 <CheckItem ok label="Creator" detail={`${me.displayName} (@${me.username})`} />
-                <CheckItem ok label="Template" detail={templateById(templateId).name} />
+                <CheckItem ok label="Theme" detail={theme.name} />
                 <CheckItem
                   ok
                   label="Badges"
@@ -597,7 +536,7 @@ export default function Create() {
                     role="radio"
                     aria-checked={exportSize === opt.id}
                     onClick={() => setExportSize(opt.id)}
-                    className={`rounded-2xl border-2 p-3 text-left transition ${
+                    className={`min-h-[56px] rounded-2xl border-2 p-3 text-left transition ${
                       exportSize === opt.id
                         ? 'border-brand-violet bg-lav/40'
                         : 'border-line bg-white hover:border-brand-cyan'
@@ -666,8 +605,7 @@ export default function Create() {
           <button
             type="button"
             onClick={() => setStep((s) => s + 1)}
-            disabled={!canNext}
-            className="btn-cta inline-flex items-center gap-2 rounded-full px-6 py-3 font-display text-lg font-bold disabled:cursor-not-allowed disabled:opacity-40"
+            className="btn-cta inline-flex items-center gap-2 rounded-full px-6 py-3 font-display text-lg font-bold"
           >
             Next <ArrowRight size={18} aria-hidden="true" />
           </button>
@@ -678,13 +616,11 @@ export default function Create() {
             onClick={() => {
               setStep(1);
               setPhoto(null);
-              setUseArt(false);
               setCaption('');
               setStreak(0);
               setStreakLabel('');
-              setTemplateId('neon-flex');
+              setTemplateId('neon-identity');
               setBadges([]);
-              setTint(TINTS[0].hex);
               setForChallenge(false);
               setError('');
               window.scrollTo(0, 0);
@@ -694,6 +630,9 @@ export default function Create() {
             Start a new card
           </button>
         )}
+      </div>
+      <div className="mt-6">
+        <CtaButton to="/dashboard" className="text-sm">Back to dashboard</CtaButton>
       </div>
     </>
   );

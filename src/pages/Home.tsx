@@ -86,7 +86,7 @@ export default function Home() {
   const topFive = leaderboard(sg.state, 'daily').slice(0, 5);
   const liveBattle = sg.state.battles.find((b) => isBattleLive(b));
   const battleCardA = liveBattle ? getCard(sg.state, liveBattle.cardAId) : undefined;
-  const battleCardB = liveBattle ? getCard(sg.state, liveBattle.cardBId) : undefined;
+  const battleCardB = liveBattle?.cardBId ? getCard(sg.state, liveBattle.cardBId) : undefined;
   const challenge = challengeForDay();
 
   const scrollRail = (dir: 1 | -1) => {
@@ -144,7 +144,7 @@ export default function Home() {
           </p>
         </div>
 
-        {/* the fan — 5 flex cards, rotated, overlapping */}
+        {/* the fan — 3 cards on phones, 5 on ≥sm, rotated, overlapping */}
         <div className="relative mx-auto mt-14 max-w-4xl px-2" aria-hidden="true">
           <span className="sticker absolute -top-7 left-[2%] z-30 -rotate-6 bg-brand-pink text-white sm:left-[6%]">
             100% Free
@@ -153,16 +153,19 @@ export default function Home() {
             No password needed
           </span>
           <div className="flex items-start justify-center">
-            {FAN_CARDS.map((c, i) => (
-              <div
-                key={c.templateId}
-                className={`relative w-[19%] min-w-0 shrink-0 ${c.z} ${i > 0 ? '-ml-[3.5%]' : ''}`}
-              >
-                <div className={`${c.rotate} ${c.shift} transition duration-300 hover:rotate-0`}>
-                  <ShowcaseCard templateId={c.templateId} title={c.title} />
+            {FAN_CARDS.map((c, i) => {
+              const outer = i === 0 || i === FAN_CARDS.length - 1;
+              return (
+                <div
+                  key={c.templateId}
+                  className={`relative min-w-0 shrink-0 ${outer ? 'hidden w-[19%] sm:block' : 'w-[30%] sm:w-[19%]'} ${c.z} ${i > 0 ? '-ml-[3.5%]' : ''}`}
+                >
+                  <div className={`${c.rotate} ${c.shift} transition duration-300 hover:rotate-0`}>
+                    <ShowcaseCard templateId={c.templateId} title={c.title} />
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
 

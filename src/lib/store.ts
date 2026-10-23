@@ -1,53 +1,57 @@
 /**
- * Snap Glow data layer (v4).
+ * Snap Glow data layer (v5 — Supabase).
  * ─────────────────────────────────────────────────────────────
- * Site-local accounts stored in this browser's localStorage.
- * Passwords are stored as SHA-256 digests only (see lib/auth.ts).
+ * Shared accounts & content in Supabase (Postgres + Auth + Storage):
+ *  - username/password auth via Supabase (deterministic internal emails,
+ *    never shown to users; no forgot-password flow by design)
+ *  - votes/likes/follows one-per-account, enforced by DB primary keys
+ *    and RLS; battle voting goes through the cast_vote RPC which also
+ *    rejects ended battles
+ *  - points are awarded by server triggers only (guard trigger blocks
+ *    clients from editing their own points)
  *
- * Honest limits, enforced everywhere in the UI:
- *  - data lives in THIS browser only (no cross-device sync without a backend)
- *  - there are NO fake users: every record belongs to someone who signed up
- *  - empty states ("Be the first to post!") instead of sample content
- *  - votes/likes/follows are one-per-account, enforced in this store
- *  - battles settle by comparing endsAt with the clock (a production
- *    backend would settle via scheduled server logic — see BACKEND_SETUP.md)
- *
- * The `SnapGlowApi` surface is backend-shaped on purpose: a future
- * Supabase backend implements the same methods (see docs/BACKEND_SETUP.md).
+ * The `SnapGlowApi` surface stays backend-shaped: pages call the same
+ * methods as the old localStorage build (see docs/BACKEND_SETUP.md).
  */
 import { useSyncExternalStore } from 'react';
 import type {
   Achievement,
   Battle,
+  BattleComment,
   BattleTally,
   FlexCardData,
   Notification,
   Post,
+  PostComment,
   Report,
   User,
 } from './types';
-import { hashPassword, verifyPassword } from './auth';
 import { POINTS, challengeForDay, levelForPoints } from './challenges';
 import { uid } from './format';
+import { supabase, requireSupabase, authEmailFor } from './supabase';
 
-const STORAGE_KEY = 'snapglow.v4';
+/* ── state shape ────────────────────────────────────────────── */
 
 export interface StoreState {
+  ready: boolean;
   users: User[];
   cards: FlexCardData[];
   posts: Post[];
   battles: Battle[];
   tallies: Record<string, BattleTally>;
+  battleComments: BattleComment[];
+  /** profileId -> user ids who liked the profile */
+  profileLikes: Record<string, string[]>;
+  /** weekly Glow Points per user (for the weekly board) */
+  weekly: Record<string, number>;
+  /** admin-featured creator ids (Discover) */
+  featured: string[];
   /** followerId -> followeeIds */
   follows: Record<string, string[]>;
   reports: Report[];
   notifications: Notification[];
-  /** dismissKeys of computed notifications the user cleared */
   dismissed: string[];
-  /** battle ids whose win points were already awarded */
-  winAwarded: string[];
   sessionUserId: string | null;
-  /** false when localStorage quota blocked a save (data kept in memory) */
   storageOk: boolean;
 }
 
@@ -55,68 +59,33 @@ const USERNAME_RE = /^[a-z0-9_.]{3,20}$/;
 
 function emptyState(): StoreState {
   return {
+    ready: false,
     users: [],
     cards: [],
     posts: [],
     battles: [],
     tallies: {},
+    battleComments: [],
+    profileLikes: {},
+    weekly: {},
+    featured: [],
     follows: {},
     reports: [],
     notifications: [],
     dismissed: [],
-    winAwarded: [],
     sessionUserId: null,
     storageOk: true,
   };
 }
 
-function load(): StoreState {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw) as StoreState;
-      if (parsed && Array.isArray(parsed.users)) {
-        const s: StoreState = {
-          ...emptyState(),
-          ...parsed,
-          follows: parsed.follows ?? {},
-          notifications: parsed.notifications ?? [],
-          dismissed: parsed.dismissed ?? [],
-          winAwarded: parsed.winAwarded ?? [],
-          storageOk: true,
-        };
-        applyDailyLogin(s);
-        settleBattles(s);
-        return s;
-      }
-    }
-  } catch {
-    /* corrupted or unavailable storage -> start empty */
-  }
-  const s = emptyState();
-  applyDailyLogin(s);
-  return s;
-}
-
-let state: StoreState = load();
+let state: StoreState = emptyState();
 let version = 0;
+let initStarted = false;
+let refreshInFlight: Promise<void> | null = null;
 const listeners = new Set<() => void>();
 
-function save() {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-    state.storageOk = true;
-  } catch {
-    // Quota exceeded (e.g. large uploaded photos): keep working in memory,
-    // surface the limitation instead of silently failing.
-    state.storageOk = false;
-  }
-}
-
-function mutate(fn: (s: StoreState) => void) {
-  settleBattles(state);
-  fn(state);
-  save();
+function commit(next: Partial<StoreState>) {
+  state = { ...state, ...next };
   version += 1;
   listeners.forEach((l) => l());
 }
@@ -131,74 +100,340 @@ function getVersion() {
   return version;
 }
 
-function todayKey(now = Date.now()): string {
-  return new Date(now).toISOString().slice(0, 10);
+/* ── local (per-browser) notifications ─────────────────────── */
+
+const notifKey = (userId: string) => `snapglow.notifs.${userId}`;
+const dismissedKey = (userId: string) => `snapglow.dismissed.${userId}`;
+
+function loadLocalNotifs(userId: string): { notifications: Notification[]; dismissed: string[] } {
+  try {
+    return {
+      notifications: JSON.parse(localStorage.getItem(notifKey(userId)) ?? '[]') as Notification[],
+      dismissed: JSON.parse(localStorage.getItem(dismissedKey(userId)) ?? '[]') as string[],
+    };
+  } catch {
+    return { notifications: [], dismissed: [] };
+  }
 }
 
-/** +5 Glow Points once per calendar day for signed-in users. */
-function applyDailyLogin(s: StoreState, now = Date.now()) {
-  const me = s.sessionUserId ? s.users.find((u) => u.id === s.sessionUserId) : undefined;
+function saveLocalNotifs(userId: string) {
+  try {
+    localStorage.setItem(notifKey(userId), JSON.stringify(state.notifications.slice(0, 60)));
+    localStorage.setItem(dismissedKey(userId), JSON.stringify(state.dismissed));
+  } catch {
+    /* ignore quota */
+  }
+}
+
+function pushLocalNotification(n: Omit<Notification, 'id' | 'userId' | 'createdAt' | 'read'>) {
+  const me = state.sessionUserId;
   if (!me) return;
-  const day = todayKey(now);
-  if (me.lastLoginDay === day) return;
-  me.lastLoginDay = day;
-  addPoints(s, me.id, POINTS.dailyLogin, `Daily login bonus · +${POINTS.dailyLogin} Glow Points`, undefined, true);
+  state.notifications.unshift({ ...n, id: uid('notif'), userId: me, createdAt: new Date().toISOString(), read: false });
+  saveLocalNotifs(me);
 }
 
-/** Award battle-win points once per ended battle. Idempotent. */
-function settleBattles(s: StoreState, now = Date.now()) {
-  for (const b of s.battles) {
-    if (s.winAwarded.includes(b.id)) continue;
-    if (new Date(b.endsAt).getTime() > now) continue;
-    s.winAwarded.push(b.id);
-    const w = battleWinner(s, b.id, now);
-    if (!w || w === 'tie') continue;
-    const winningCard = getCard(s, w === 'a' ? b.cardAId : b.cardBId);
-    if (winningCard) {
-      addPoints(s, winningCard.ownerId, POINTS.battleWin, `Battle won: “${b.title}” · +${POINTS.battleWin} Glow Points`, `/battles/${b.id}/results`, true);
+/* ── hydration ──────────────────────────────────────────────── */
+
+type DbCard = {
+  id: string; owner_id: string; title: string; caption: string; template: string;
+  image_kind: 'art' | 'upload'; image_path: string | null; art_seed: number;
+  streak: number; streak_label: string; badges: string[]; challenge_day: string | null;
+  published: boolean; created_at: string;
+};
+type DbUser = {
+  id: string; username: string; display_name: string; bio: string; hue: number;
+  avatar: string | null; avatar_emoji: string | null; theme: string;
+  points: number; last_login_day: string | null; is_demo: boolean; is_suspended: boolean;
+  created_at: string;
+};
+
+function mapUser(r: DbUser, badges: string[]): User {
+  return {
+    id: r.id,
+    username: r.username,
+    displayName: r.display_name,
+    bio: r.bio ?? '',
+    hue: r.hue ?? 0,
+    avatar: r.avatar ?? undefined,
+    avatarEmoji: r.avatar_emoji ?? undefined,
+    theme: r.theme,
+    points: r.points ?? 0,
+    badges,
+    lastLoginDay: r.last_login_day ?? '',
+    joinedAt: r.created_at,
+    isDemo: r.is_demo,
+    isSuspended: r.is_suspended,
+  };
+}
+
+function mapCard(r: DbCard, likes: string[]): FlexCardData {
+  return {
+    id: r.id,
+    ownerId: r.owner_id,
+    title: r.title,
+    caption: r.caption ?? '',
+    template: r.template,
+    imageKind: r.image_kind,
+    imagePath: r.image_path ?? undefined,
+    artSeed: String(r.art_seed),
+    streak: r.streak,
+    streakLabel: r.streak_label ?? '',
+    badges: r.badges ?? [],
+    likes,
+    challengeDay: r.challenge_day ?? undefined,
+    createdAt: r.created_at,
+    published: r.published,
+  };
+}
+
+async function fetchAll(): Promise<void> {
+  const sb = requireSupabase();
+  // finalize any battles whose countdown passed (idempotent server fn)
+  sb.rpc('finalize_battles').then(() => undefined, () => undefined);
+
+  const me = (await sb.auth.getUser()).data.user ?? null;
+
+  const [
+    usersR,
+    cardsR,
+    cardLikesR,
+    postsR,
+    postLikesR,
+    commentsR,
+    followsR,
+    battlesR,
+    votesR,
+    bCommentsR,
+    bLikesR,
+    profileLikesR,
+    badgesR,
+    weeklyR,
+    featuredR,
+    reportsR,
+  ] = await Promise.all([
+    sb.from('profiles').select('*').eq('is_suspended', false),
+    sb.from('cards').select('*').or('published.eq.true,owner_id.eq.' + (me?.id ?? '00000000-0000-0000-0000-000000000000')),
+    sb.from('card_likes').select('card_id,user_id'),
+    sb.from('posts').select('*'),
+    sb.from('post_likes').select('post_id,user_id'),
+    sb.from('comments').select('*'),
+    sb.from('follows').select('follower_id,followee_id,created_at'),
+    sb.from('battles').select('*').order('created_at', { ascending: false }),
+    sb.from('votes').select('battle_id,user_id,side'),
+    sb.from('battle_comments').select('*').order('created_at', { ascending: true }),
+    sb.from('battle_likes').select('battle_id,user_id'),
+    sb.from('profile_likes').select('profile_id,user_id'),
+    sb.from('earned_badges').select('user_id,badge_id'),
+    sb.from('weekly_points').select('user_id,points'),
+    sb.from('featured').select('user_id'),
+    me ? sb.from('reports').select('*').order('created_at', { ascending: false }).limit(200) : Promise.resolve({ data: [] }),
+  ]);
+
+  const users = (usersR.data ?? []).map((r: DbUser) => mapUser(r, []));
+  const badgesByUser = new Map<string, string[]>();
+  for (const b of (badgesR.data ?? []) as Array<{ user_id: string; badge_id: string }>) {
+    const arr = badgesByUser.get(b.user_id) ?? [];
+    arr.push(b.badge_id);
+    badgesByUser.set(b.user_id, arr);
+  }
+  for (const u of users) u.badges = badgesByUser.get(u.id) ?? [];
+
+  const likesByCard = new Map<string, string[]>();
+  for (const l of (cardLikesR.data ?? []) as Array<{ card_id: string; user_id: string }>) {
+    const arr = likesByCard.get(l.card_id) ?? [];
+    arr.push(l.user_id);
+    likesByCard.set(l.card_id, arr);
+  }
+  const cards = (cardsR.data ?? []).map((r: DbCard) => mapCard(r, likesByCard.get(r.id) ?? []));
+
+  const likesByPost = new Map<string, string[]>();
+  for (const l of (postLikesR.data ?? []) as Array<{ post_id: string; user_id: string }>) {
+    const arr = likesByPost.get(l.post_id) ?? [];
+    arr.push(l.user_id);
+    likesByPost.set(l.post_id, arr);
+  }
+  const commentsByPost = new Map<string, PostComment[]>();
+  for (const c of (commentsR.data ?? []) as Array<{ id: string; post_id: string; author_id: string; text: string; created_at: string }>) {
+    const arr = commentsByPost.get(c.post_id) ?? [];
+    arr.push({ id: c.id, postId: c.post_id, authorId: c.author_id, text: c.text, createdAt: c.created_at });
+    commentsByPost.set(c.post_id, arr);
+  }
+  const posts: Post[] = ((postsR.data ?? []) as Array<{
+    id: string; author_id: string; card_id: string | null; caption: string;
+    tags: string[]; shares: number; created_at: string;
+  }>).map((r) => ({
+    id: r.id,
+    authorId: r.author_id,
+    cardId: r.card_id ?? undefined,
+    caption: r.caption,
+    tags: r.tags ?? [],
+    likes: likesByPost.get(r.id) ?? [],
+    comments: commentsByPost.get(r.id) ?? [],
+    shares: r.shares ?? 0,
+    createdAt: r.created_at,
+  }));
+
+  const follows: Record<string, string[]> = {};
+  for (const f of (followsR.data ?? []) as Array<{ follower_id: string; followee_id: string }>) {
+    (follows[f.follower_id] ??= []).push(f.followee_id);
+  }
+
+  const battles: Battle[] = ((battlesR.data ?? []) as Array<{
+    id: string; title: string; created_by: string; card_a_id: string; card_b_id: string | null;
+    opponent_id: string | null; status: Battle['status']; winner: Battle['winner'];
+    duration_hours: number; ends_at: string | null; created_at: string; accepted_at: string | null;
+  }>).map((r) => ({
+    id: r.id,
+    title: r.title,
+    cardAId: r.card_a_id,
+    cardBId: r.card_b_id,
+    createdBy: r.created_by,
+    opponentId: r.opponent_id,
+    status: r.status,
+    winner: r.winner,
+    durationHours: r.duration_hours,
+    createdAt: r.created_at,
+    endsAt: r.ends_at ?? '',
+    acceptedAt: r.accepted_at,
+  }));
+
+  const tallies: Record<string, BattleTally> = {};
+  for (const b of battles) tallies[b.id] = { a: 0, b: 0, voters: [] };
+  for (const v of (votesR.data ?? []) as Array<{ battle_id: string; user_id: string; side: 'a' | 'b' }>) {
+    const t = tallies[v.battle_id];
+    if (!t) continue;
+    t[v.side] += 1;
+    t.voters.push(v.user_id);
+  }
+
+  const battleComments: BattleComment[] = ((bCommentsR.data ?? []) as Array<{
+    id: string; battle_id: string; author_id: string; text: string; created_at: string;
+  }>).map((r) => ({ id: r.id, battleId: r.battle_id, authorId: r.author_id, text: r.text, createdAt: r.created_at }));
+
+  const profileLikes: Record<string, string[]> = {};
+  for (const l of (profileLikesR.data ?? []) as Array<{ profile_id: string; user_id: string }>) {
+    (profileLikes[l.profile_id] ??= []).push(l.user_id);
+  }
+
+  const weekly: Record<string, number> = {};
+  for (const w of (weeklyR.data ?? []) as Array<{ user_id: string; points: number }>) {
+    weekly[w.user_id] = Number(w.points) || 0;
+  }
+
+  const reports: Report[] = ((reportsR.data ?? []) as Array<{
+    id: string; target_type: Report['targetType']; target_id: string; reason: string;
+    details: string; reporter_id: string | null; created_at: string; status: Report['status'];
+  }>).map((r) => ({
+    id: r.id, targetType: r.target_type, targetId: r.target_id, reason: r.reason,
+    details: r.details, reporterId: r.reporter_id, createdAt: r.created_at, status: r.status,
+  }));
+
+  // diff-based local notifications (level-up / new follower) for the session user
+  const prevMe = state.sessionUserId ? state.users.find((u) => u.id === state.sessionUserId) : undefined;
+  const nextMe = me ? users.find((u) => u.id === me.id) : undefined;
+
+  commit({
+    ready: true,
+    users,
+    cards,
+    posts,
+    battles,
+    tallies,
+    battleComments,
+    profileLikes,
+    weekly,
+    featured: (featuredR.data ?? []).map((f: { user_id: string }) => f.user_id),
+    follows,
+    reports,
+    sessionUserId: me?.id ?? null,
+  });
+
+  if (nextMe && prevMe) {
+    const before = levelForPoints(prevMe.points);
+    const after = levelForPoints(nextMe.points);
+    if (after.name !== before.name) {
+      pushLocalNotification({
+        kind: 'level-up',
+        text: `You reached ${after.name} level! ${after.blurb}.`,
+        link: `/u/${nextMe.username}`,
+      });
     }
+    const prevFollowers = Object.values(state.follows).length; // recomputed below on next tick
+    void prevFollowers;
   }
 }
 
-function addPoints(
-  s: StoreState,
-  userId: string,
-  amount: number,
-  note: string,
-  link?: string,
-  silent = false,
-): void {
-  const u = s.users.find((x) => x.id === userId);
-  if (!u) return;
-  const before = levelForPoints(u.points);
-  u.points = Math.max(0, u.points + amount);
-  const after = levelForPoints(u.points);
-  if (!silent) {
-    s.notifications.unshift({
-      id: uid('notif'),
-      userId,
-      kind: 'welcome',
-      text: note,
-      link,
-      createdAt: new Date().toISOString(),
-      read: false,
-    });
+async function refresh(): Promise<void> {
+  if (!supabase) {
+    commit({ ready: true });
+    return;
   }
-  if (after.name !== before.name) {
-    s.notifications.unshift({
-      id: uid('notif'),
-      userId,
-      kind: 'level-up',
-      text: `You reached ${after.name} level! ${after.blurb}.`,
-      link: `/u/${u.username}`,
-      createdAt: new Date().toISOString(),
-      read: false,
+  if (refreshInFlight) return refreshInFlight;
+  refreshInFlight = fetchAll()
+    .catch(() => undefined)
+    .finally(() => {
+      refreshInFlight = null;
     });
+  return refreshInFlight;
+}
+
+/** Boot: restore session, hydrate data, claim daily-login points. */
+async function init(): Promise<void> {
+  if (!supabase) {
+    commit({ ready: true });
+    return;
+  }
+  const sb = requireSupabase();
+  // Session restore can complete AFTER the first getSession (slow storage or
+  // token refresh) — re-hydrate whenever the auth state actually changes.
+  sb.auth.onAuthStateChange((event, session) => {
+    const id = session?.user?.id ?? null;
+    if (
+      (event === 'SIGNED_IN' || event === 'INITIAL_SESSION') &&
+      id &&
+      id !== state.sessionUserId
+    ) {
+      state.notifications = loadLocalNotifs(id).notifications;
+      state.dismissed = loadLocalNotifs(id).dismissed;
+      refresh().then(() => {
+        sb.rpc('claim_daily_login').then(() => refresh(), () => undefined);
+      });
+    }
+    if (event === 'SIGNED_OUT' && state.sessionUserId) {
+      refresh();
+    }
+  });
+  const { data } = await sb.auth.getSession();
+  const userId = data.session?.user?.id ?? null;
+  if (userId) {
+    const local = loadLocalNotifs(userId);
+    state.notifications = local.notifications;
+    state.dismissed = local.dismissed;
+  }
+  await refresh();
+  if (state.sessionUserId) {
+    sb.rpc('claim_daily_login').then(() => refresh(), () => undefined);
   }
 }
 
-function pushNotification(s: StoreState, userId: string, n: Omit<Notification, 'id' | 'userId' | 'createdAt' | 'read'>): void {
-  s.notifications.unshift({ ...n, userId, id: uid('notif'), createdAt: new Date().toISOString(), read: false });
+if (!initStarted) {
+  initStarted = true;
+  init();
+}
+
+/* ── badge sync (achievements computed client-side, stored server-side) ── */
+
+async function syncMyBadges() {
+  const me = state.sessionUserId ? getUser(state, state.sessionUserId) : undefined;
+  if (!me || !supabase) return;
+  const unlocked = computeAchievements(state, me.id).filter((a) => a.unlocked).map((a) => a.id);
+  const missing = unlocked.filter((b) => !me.badges.includes(b));
+  if (!missing.length) return;
+  const rows = missing.map((badge_id) => ({ user_id: me.id, badge_id }));
+  await supabase.from('earned_badges').upsert(rows, { onConflict: 'user_id,badge_id' });
+  me.badges.push(...missing);
+  version += 1;
+  listeners.forEach((l) => l());
 }
 
 /* ── pure selectors ─────────────────────────────────────────── */
@@ -222,19 +457,27 @@ export function getPost(s: StoreState, id: string): Post | undefined {
 export function getBattle(s: StoreState, id: string): Battle | undefined {
   return s.battles.find((b) => b.id === id);
 }
-
-export function isBattleLive(b: Battle, now = Date.now()): boolean {
-  return new Date(b.endsAt).getTime() > now;
+export function getBattleComments(s: StoreState, battleId: string): BattleComment[] {
+  return s.battleComments.filter((c) => c.battleId === battleId);
+}
+export function profileLikeCount(s: StoreState, userId: string): number {
+  return (s.profileLikes[userId] ?? []).length;
+}
+export function hasLikedProfile(s: StoreState, userId: string): boolean {
+  const me = sessionUser(s);
+  return !!me && (s.profileLikes[userId] ?? []).includes(me.id);
 }
 
-/** 'a' | 'b' | 'tie' | null (null while live) — from STORED votes only. */
-export function battleWinner(s: StoreState, battleId: string, now = Date.now()): 'a' | 'b' | 'tie' | null {
+export function isBattleLive(b: Battle, now = Date.now()): boolean {
+  if (b.status === 'live' && b.endsAt) return new Date(b.endsAt).getTime() > now;
+  return false;
+}
+
+/** 'a' | 'b' | 'tie' | null (null while undecided) — authoritative from DB. */
+export function battleWinner(s: StoreState, battleId: string, _now = Date.now()): 'a' | 'b' | 'tie' | null {
   const b = getBattle(s, battleId);
-  if (!b || isBattleLive(b, now)) return null;
-  const t = s.tallies[battleId];
-  if (!t) return null;
-  if (t.a === t.b) return 'tie';
-  return t.a > t.b ? 'a' : 'b';
+  if (!b || b.status !== 'ended') return null;
+  return b.winner;
 }
 
 export interface UserStats {
@@ -242,9 +485,11 @@ export interface UserStats {
   posts: number;
   likesReceived: number;
   wins: number;
+  losses: number;
   followers: number;
   following: number;
   votesCast: number;
+  profileLikes: number;
 }
 
 export function votesCastBy(s: StoreState, userId: string): number {
@@ -261,15 +506,49 @@ export function userStats(s: StoreState, userId: string, now = Date.now()): User
   const likesReceived =
     cards.reduce((n, c) => n + c.likes.length, 0) + posts.reduce((n, p) => n + p.likes.length, 0);
   let wins = 0;
+  let losses = 0;
   for (const b of s.battles) {
-    const w = battleWinner(s, b.id, now);
+    if (b.status !== 'ended' || !b.cardBId) continue;
+    const w = b.winner;
     if (!w || w === 'tie') continue;
-    const winningCard = getCard(s, w === 'a' ? b.cardAId : b.cardBId);
-    if (winningCard?.ownerId === userId) wins += 1;
+    const winCard = getCard(s, w === 'a' ? b.cardAId : b.cardBId);
+    const loseCard = getCard(s, w === 'a' ? b.cardBId : b.cardAId);
+    if (winCard?.ownerId === userId) wins += 1;
+    else if (loseCard?.ownerId === userId) losses += 1;
   }
   const followers = Object.values(s.follows).filter((arr) => arr.includes(userId)).length;
   const following = (s.follows[userId] ?? []).length;
-  return { cards: cards.length, posts: posts.length, likesReceived, wins, followers, following, votesCast: votesCastBy(s, userId) };
+  return {
+    cards: cards.length,
+    posts: posts.length,
+    likesReceived,
+    wins,
+    losses,
+    followers,
+    following,
+    votesCast: votesCastBy(s, userId),
+    profileLikes: (s.profileLikes[userId] ?? []).length,
+  };
+}
+
+/** Consecutive battle wins (most recent first). 0 after any loss/tie-free gap. */
+export function currentWinStreak(s: StoreState, userId: string, now = Date.now()): number {
+  const ended = s.battles
+    .filter((b) => b.status === 'ended' && b.winner && b.winner !== 'tie' && b.cardBId)
+    .filter((b) => {
+      const a = getCard(s, b.cardAId);
+      const c = getCard(s, b.cardBId!);
+      return a?.ownerId === userId || c?.ownerId === userId;
+    })
+    .sort((x, y) => +new Date(y.endsAt) - +new Date(x.endsAt));
+  void now;
+  let streak = 0;
+  for (const b of ended) {
+    const winCard = getCard(s, b.winner === 'a' ? b.cardAId : b.cardBId!);
+    if (winCard?.ownerId === userId) streak += 1;
+    else break;
+  }
+  return streak;
 }
 
 export function computeAchievements(s: StoreState, userId: string, now = Date.now()): Achievement[] {
@@ -278,7 +557,7 @@ export function computeAchievements(s: StoreState, userId: string, now = Date.no
     ['first-card', 'First Glow', 'Publish your first flex card', stats.cards >= 1],
     ['crowd', 'Crowd Favorite', 'Collect 25 likes across cards & posts', stats.likesReceived >= 25],
     ['duelist', 'Duelist', 'Enter a vote battle', s.battles.some((b) => {
-      const a = getCard(s, b.cardAId); const c = getCard(s, b.cardBId);
+      const a = getCard(s, b.cardAId); const c = b.cardBId ? getCard(s, b.cardBId) : undefined;
       return a?.ownerId === userId || c?.ownerId === userId;
     })],
     ['champion', 'Battle Champion', 'Win a vote battle', stats.wins >= 1],
@@ -286,6 +565,8 @@ export function computeAchievements(s: StoreState, userId: string, now = Date.no
     ['creator5', 'Card Machine', 'Publish 5 flex cards', stats.cards >= 5],
     ['voter10', 'Super Voter', 'Cast 10 battle votes', stats.votesCast >= 10],
     ['streaker', 'Streak Keeper', 'Publish a streak card', s.cards.some((c) => c.ownerId === userId && c.published && c.streak > 0)],
+    ['win-streak-2', 'On a Roll', 'Win 2 battles in a row', currentWinStreak(s, userId) >= 2],
+    ['win-streak-3', 'Unstoppable', 'Win 3 battles in a row', currentWinStreak(s, userId) >= 3],
   ];
   return defs.map(([id, label, blurb, unlocked]) => ({ id, label, blurb, unlocked }));
 }
@@ -311,7 +592,9 @@ export function trendingCards(s: StoreState, limit = 8): FlexCardData[] {
     .slice(0, limit);
 }
 
-export type BoardKind = 'daily' | 'weekly' | 'most-liked' | 'most-wins' | 'rising' | 'recent-winners' | 'top-voters';
+export type BoardKind =
+  | 'daily' | 'weekly' | 'most-liked' | 'most-wins' | 'rising'
+  | 'recent-winners' | 'top-voters' | 'profile-likes' | 'win-streaks' | 'all-time';
 
 export interface BoardRow {
   user: User;
@@ -327,13 +610,20 @@ export function leaderboard(s: StoreState, kind: BoardKind, now = Date.now()): B
     switch (kind) {
       case 'daily':
       case 'weekly':
-        score = stats.likesReceived + stats.wins * 500 + stats.votesCast * 10;
+        score = s.weekly[user.id] ?? 0;
         break;
+      case 'all-time':
+        score = user.points;
+        break;
+      case 'profile-likes':
       case 'most-liked':
-        score = stats.likesReceived;
+        score = stats.likesReceived + stats.profileLikes * 2;
         break;
       case 'most-wins':
         score = stats.wins * 1000 + stats.likesReceived;
+        break;
+      case 'win-streaks':
+        score = currentWinStreak(s, user.id, now) * 100 + stats.wins;
         break;
       case 'rising':
         score = days <= 60 ? (stats.likesReceived + stats.cards * 20) / days : -1;
@@ -349,8 +639,7 @@ export function leaderboard(s: StoreState, kind: BoardKind, now = Date.now()): B
   });
   const filtered = rows.filter((r) => {
     if (kind === 'rising') return r.score >= 0;
-    if (kind === 'top-voters') return r.score > 0;
-    if (kind === 'recent-winners') return r.score > 0;
+    if (kind === 'top-voters' || kind === 'recent-winners') return r.score > 0;
     return true;
   });
   return filtered.sort((a, b) => b.score - a.score);
@@ -372,14 +661,15 @@ export function topVoters(s: StoreState, limit = 20): TopVoterRow[] {
 
 export function recentWinners(s: StoreState, now = Date.now()) {
   return [...s.battles]
-    .filter((b) => !isBattleLive(b, now))
+    .filter((b) => b.status === 'ended')
     .sort((a, b) => +new Date(b.endsAt) - +new Date(a.endsAt))
-    .map((b) => ({ battle: b, winner: battleWinner(s, b.id, now) }));
+    .map((b) => ({ battle: b, winner: b.winner }));
 }
 
 /** Battles ending within the next `hours` hours, soonest first. */
 export function endingSoon(s: StoreState, hours = 2, now = Date.now()): Battle[] {
   return s.battles
+    .filter((b) => b.status === 'live' && b.endsAt)
     .filter((b) => {
       const ms = new Date(b.endsAt).getTime() - now;
       return ms > 0 && ms <= hours * 3600 * 1000;
@@ -435,20 +725,31 @@ export function getNotifications(s: StoreState, userId: string, now = Date.now()
     if (s.dismissed.includes(dismissKey)) return;
     list.push({ id: dismissKey, text, link, meta, read: false, dismissKey });
   };
+  // pending challenges addressed to me
+  for (const b of s.battles) {
+    if (b.status === 'pending' && b.opponentId === userId) {
+      push(`challenge-${b.id}`, `You've been challenged: “${b.title}” — accept or reject it.`, `/battles/${b.id}`, 'new challenge');
+    }
+  }
   // battles ending soon involving this user
   for (const b of s.battles) {
-    const ms = new Date(b.endsAt).getTime() - now;
+    if (!b.endsAt) continue;
     const involved = battleInvolves(s, b.id, userId);
-    if (ms > 0 && ms <= 2 * 3600 * 1000 && involved) {
-      push(`ending-${b.id}`, `Your battle “${b.title}” ends in ${formatMins(ms)} — share your vote link!`, `/battles/${b.id}`, 'ending soon');
-    } else if (ms <= 0 && ms >= -48 * 3600 * 1000 && involved) {
-      const w = battleWinner(s, b.id, now);
-      push(
-        `ended-${b.id}`,
-        w === 'tie' ? `“${b.title}” ended in a tie — see the final tally.` : `“${b.title}” has ended — see who won.`,
-        `/battles/${b.id}/results`,
-        'just ended',
-      );
+    if (b.status === 'live') {
+      const ms = new Date(b.endsAt).getTime() - now;
+      if (ms > 0 && ms <= 2 * 3600 * 1000 && involved) {
+        push(`ending-${b.id}`, `Your battle “${b.title}” ends in ${formatMins(ms)} — share your vote link!`, `/battles/${b.id}`, 'ending soon');
+      }
+    } else if (b.status === 'ended' && involved) {
+      const ms = now - new Date(b.endsAt).getTime();
+      if (ms <= 48 * 3600 * 1000) {
+        push(
+          `ended-${b.id}`,
+          b.winner === 'tie' ? `“${b.title}” ended in a tie — see the final tally.` : `“${b.title}” has ended — see who won.`,
+          `/battles/${b.id}/results`,
+          'just ended',
+        );
+      }
     }
   }
   // daily challenge
@@ -466,8 +767,9 @@ export function getNotifications(s: StoreState, userId: string, now = Date.now()
 function battleInvolves(s: StoreState, battleId: string, userId: string): boolean {
   const b = getBattle(s, battleId);
   if (!b) return false;
+  if (b.createdBy === userId || b.opponentId === userId) return true;
   const a = getCard(s, b.cardAId);
-  const c = getCard(s, b.cardBId);
+  const c = b.cardBId ? getCard(s, b.cardBId) : undefined;
   if (a?.ownerId === userId || c?.ownerId === userId) return true;
   const t = s.tallies[battleId];
   return !!t?.voters.includes(userId);
@@ -513,14 +815,33 @@ export interface PublishInput {
   challengeDay?: string;
 }
 
+function friendlyAuthError(msg: string): string {
+  if (/invalid login credentials/i.test(msg)) return 'Wrong username or password — try again.';
+  if (/email not confirmed/i.test(msg)) return 'Login is not activated yet (admin needs to disable email confirmation in Supabase).';
+  if (/already registered/i.test(msg)) return 'That email is already in use.';
+  if (/rate limit/i.test(msg)) return 'Too many attempts — wait a moment and try again.';
+  return msg;
+}
+
 export const api = {
   get state() {
     return state;
   },
 
+  /** Re-hydrate all shared data from Supabase. */
+  async refresh(): Promise<void> {
+    return refresh();
+  },
+
   /* ── auth ── */
 
-  async signUp(displayName: string, username: string, password: string): Promise<ActionResult> {
+  async signUp(
+    displayName: string,
+    username: string,
+    password: string,
+    opts?: { hue?: number; avatarEmoji?: string },
+  ): Promise<ActionResult> {
+    const sb = requireSupabase();
     const name = displayName.trim();
     const handle = username.trim().replace(/^@/, '').toLowerCase();
     if (name.length < 2) return { ok: false, message: 'Please enter a display name (2+ characters).' };
@@ -529,309 +850,255 @@ export const api = {
     if (password.length < 6) return { ok: false, message: 'Choose a password with at least 6 characters.' };
     if (getUserByUsername(state, handle))
       return { ok: false, message: 'That username is taken — try another one.' };
-    const passwordHash = await hashPassword(password);
-    const id = uid('u');
-    const nowIso = new Date().toISOString();
-    mutate((s) => {
-      s.users.push({
-        id,
-        username: handle,
-        displayName: name,
-        bio: '',
-        hue: Math.floor(Math.random() * 360),
-        passwordHash,
-        points: 0,
-        badges: [],
-        lastLoginDay: todayKey(),
-        joinedAt: nowIso,
-      });
-      s.sessionUserId = id;
-      pushNotification(s, id, {
-        kind: 'welcome',
-        text: `Welcome to Snap Glow, ${name}! Create your first flex card to earn your first ${POINTS.createCard} Glow Points.`,
-        link: '/create',
-      });
+    const { data, error } = await sb.auth.signUp({
+      email: authEmailFor(handle),
+      password,
+      options: {
+        data: {
+          username: handle,
+          displayName: name,
+          hue: String(opts?.hue ?? Math.floor(Math.random() * 360)),
+          avatarEmoji: opts?.avatarEmoji ?? null,
+        },
+      },
     });
-    return { ok: true, message: 'Account created — welcome to Snap Glow!', id };
+    if (error) {
+      if (/duplicate key|unique constraint|already registered/i.test(error.message))
+        return { ok: false, message: 'That username is taken — try another one.' };
+      if (/email_address_invalid|invalid format/i.test(error.message))
+        return { ok: false, message: 'Signup is not activated yet (admin needs to disable email confirmation in Supabase).' };
+      return { ok: false, message: friendlyAuthError(error.message) };
+    }
+    if (!data.session) {
+      return {
+        ok: false,
+        message: 'Signup is not activated yet (admin needs to disable email confirmation in Supabase).',
+      };
+    }
+    await refresh();
+    pushLocalNotification({
+      kind: 'welcome',
+      text: `Welcome to Snap Glow, ${name}! Create your first flex card to earn your first ${POINTS.createCard} Glow Points.`,
+      link: '/create',
+    });
+    return { ok: true, message: 'Account created — welcome to Snap Glow!', id: data.user?.id };
   },
 
   async login(username: string, password: string): Promise<ActionResult> {
-    const user = getUserByUsername(state, username);
-    if (!user) return { ok: false, message: 'No account found with that username.' };
-    const ok = await verifyPassword(password, user.passwordHash);
-    if (!ok) return { ok: false, message: 'Wrong password — try again.' };
-    mutate((s) => {
-      s.sessionUserId = user.id;
-      const u = getUser(s, user.id);
-      if (u && u.lastLoginDay !== todayKey()) {
-        u.lastLoginDay = todayKey();
-        addPoints(s, u.id, POINTS.dailyLogin, `Daily login bonus · +${POINTS.dailyLogin} Glow Points`, undefined, true);
-        pushNotification(s, user.id, {
-          kind: 'welcome',
-          text: `Welcome back! Daily login bonus: +${POINTS.dailyLogin} Glow Points.`,
-          link: `/u/${u.username}`,
-        });
-      }
+    const sb = requireSupabase();
+    const handle = username.trim().replace(/^@/, '').toLowerCase();
+    if (!handle || !password) return { ok: false, message: 'Enter your username and password.' };
+    const { data, error } = await sb.auth.signInWithPassword({
+      email: authEmailFor(handle),
+      password,
     });
-    return { ok: true, message: `Welcome back, ${user.displayName}!`, id: user.id };
+    if (error) return { ok: false, message: friendlyAuthError(error.message) };
+    const userId = data.user?.id;
+    if (!userId) return { ok: false, message: 'Login failed — try again.' };
+    state.notifications = loadLocalNotifs(userId).notifications;
+    state.dismissed = loadLocalNotifs(userId).dismissed;
+    await refresh();
+    const me = getUser(state, userId);
+    if (me?.isSuspended) {
+      await sb.auth.signOut();
+      await refresh();
+      return { ok: false, message: 'This account has been suspended by moderation.' };
+    }
+    sb.rpc('claim_daily_login').then(() => refresh(), () => undefined);
+    return { ok: true, message: `Welcome back, ${me?.displayName ?? 'creator'}!`, id: userId };
   },
 
-  logout() {
-    mutate((s) => {
-      s.sessionUserId = null;
-    });
+  async logout() {
+    const sb = requireSupabase();
+    await sb.auth.signOut();
+    await refresh();
   },
 
-  updateProfile(patch: { displayName?: string; bio?: string }): ActionResult {
+  async updateProfile(patch: {
+    displayName?: string;
+    bio?: string;
+    hue?: number;
+    avatar?: string | null;
+    avatarEmoji?: string | null;
+    theme?: string;
+  }): Promise<ActionResult> {
+    const sb = requireSupabase();
     const me = sessionUser(state);
     if (!me) return { ok: false, message: 'Please sign in first.' };
     if (patch.displayName !== undefined && patch.displayName.trim().length < 2)
       return { ok: false, message: 'Display name needs 2+ characters.' };
-    mutate((s) => {
-      const u = getUser(s, me.id);
-      if (!u) return;
-      if (patch.displayName?.trim()) u.displayName = patch.displayName.trim();
-      if (patch.bio !== undefined) u.bio = patch.bio.slice(0, 160);
-    });
+    const update: Record<string, unknown> = {};
+    if (patch.displayName?.trim()) update.display_name = patch.displayName.trim();
+    if (patch.bio !== undefined) update.bio = patch.bio.slice(0, 160);
+    if (patch.hue !== undefined) update.hue = Math.max(0, Math.min(359, Math.round(patch.hue)));
+    if (patch.avatar !== undefined) update.avatar = patch.avatar; // null clears
+    if (patch.avatarEmoji !== undefined) update.avatar_emoji = patch.avatarEmoji;
+    if (patch.theme !== undefined) update.theme = patch.theme;
+    if (!Object.keys(update).length) return { ok: true, message: 'Nothing to update.' };
+    const { error } = await sb.from('profiles').update(update).eq('id', me.id);
+    if (error) return { ok: false, message: error.message };
+    await refresh();
     return { ok: true, message: 'Profile updated.' };
   },
 
   /* ── social ── */
 
-  toggleLikePost(postId: string): ActionResult & { liked?: boolean } {
+  async toggleProfileLike(userId: string): Promise<ActionResult & { liked?: boolean }> {
+    const sb = requireSupabase();
+    const me = sessionUser(state);
+    if (!me) return { ok: false, message: 'Create a free account to like profiles.' };
+    if (userId === me.id) return { ok: false, message: "You can't like your own profile." };
+    const liked = (state.profileLikes[userId] ?? []).includes(me.id);
+    if (liked) {
+      await sb.from('profile_likes').delete().eq('profile_id', userId).eq('user_id', me.id);
+    } else {
+      const { error } = await sb.from('profile_likes').insert({ profile_id: userId, user_id: me.id });
+      if (error) return { ok: false, message: error.message.includes('duplicate') ? 'Already liked.' : error.message };
+    }
+    await refresh();
+    return { ok: true, message: liked ? 'Like removed.' : 'Profile liked!', liked: !liked };
+  },
+
+  async toggleLikePost(postId: string): Promise<ActionResult & { liked?: boolean }> {
+    const sb = requireSupabase();
     const me = sessionUser(state);
     if (!me) return { ok: false, message: 'Create a free account to like posts.' };
-    let liked = false;
-    let ownerId = '';
-    mutate((s) => {
-      const p = getPost(s, postId);
-      if (!p) return;
-      ownerId = p.authorId;
-      const i = p.likes.indexOf(me.id);
-      if (i >= 0) p.likes.splice(i, 1);
-      else {
-        p.likes.push(me.id);
-        liked = true;
-      }
-      if (liked && ownerId !== me.id) {
-        const total = p.likes.length;
-        if ([10, 25, 50, 100].includes(total)) {
-          pushNotification(s, ownerId, {
-            kind: 'like-milestone',
-            text: `Your post hit ${total} likes! Keep the streak going.`,
-            link: `/posts/${postId}`,
-          });
-        }
-      }
-    });
-    return { ok: true, message: liked ? 'Liked.' : 'Like removed.', liked };
+    const post = getPost(state, postId);
+    if (!post) return { ok: false, message: 'Post not found.' };
+    const liked = post.likes.includes(me.id);
+    if (liked) {
+      await sb.from('post_likes').delete().eq('post_id', postId).eq('user_id', me.id);
+    } else {
+      const { error } = await sb.from('post_likes').insert({ post_id: postId, user_id: me.id });
+      if (error) return { ok: false, message: error.message };
+    }
+    await refresh();
+    return { ok: true, message: liked ? 'Like removed.' : 'Liked.', liked: !liked };
   },
 
-  toggleLikeCard(cardId: string): ActionResult & { liked?: boolean } {
+  async toggleLikeCard(cardId: string): Promise<ActionResult & { liked?: boolean }> {
+    const sb = requireSupabase();
     const me = sessionUser(state);
     if (!me) return { ok: false, message: 'Create a free account to like cards.' };
-    let liked = false;
-    mutate((s) => {
-      const c = getCard(s, cardId);
-      if (!c) return;
-      const i = c.likes.indexOf(me.id);
-      if (i >= 0) c.likes.splice(i, 1);
-      else {
-        c.likes.push(me.id);
-        liked = true;
-        if (c.ownerId !== me.id && [10, 25, 50, 100].includes(c.likes.length)) {
-          pushNotification(s, c.ownerId, {
-            kind: 'like-milestone',
-            text: `Your card “${c.title}” hit ${c.likes.length} likes!`,
-            link: `/cards/${cardId}`,
-          });
-        }
+    const card = getCard(state, cardId);
+    if (!card) return { ok: false, message: 'Card not found.' };
+    if (card.ownerId === me.id) return { ok: false, message: 'Liking your own card does nothing — share it instead!' };
+    const liked = card.likes.includes(me.id);
+    if (liked) {
+      await sb.from('card_likes').delete().eq('card_id', cardId).eq('user_id', me.id);
+    } else {
+      const { error } = await sb.from('card_likes').insert({ card_id: cardId, user_id: me.id });
+      if (error) {
+        if (/duplicate/i.test(error.message)) return { ok: true, message: 'Already liked.', liked: true };
+        return { ok: false, message: error.message };
       }
-    });
-    return { ok: true, message: liked ? 'Liked.' : 'Like removed.', liked };
+    }
+    await refresh();
+    return { ok: true, message: liked ? 'Like removed.' : 'Liked.', liked: !liked };
   },
 
-  addComment(postId: string, text: string): ActionResult {
+  async addComment(postId: string, text: string): Promise<ActionResult> {
+    const sb = requireSupabase();
     const me = sessionUser(state);
     if (!me) return { ok: false, message: 'Create a free account to comment.' };
     const clean = text.trim();
     if (!clean) return { ok: false, message: 'Write something first.' };
     if (clean.length > 500) return { ok: false, message: 'Comments are limited to 500 characters.' };
-    let id = '';
-    mutate((s) => {
-      const p = getPost(s, postId);
-      if (!p) return;
-      id = uid('cm');
-      p.comments.push({ id, postId, authorId: me.id, text: clean, createdAt: new Date().toISOString() });
-      addPoints(s, me.id, POINTS.comment, `Comment posted · +${POINTS.comment} Glow Points`, `/posts/${postId}`, true);
-    });
-    if (!id) return { ok: false, message: 'Post not found.' };
+    const id = uid('cm');
+    const { error } = await sb.from('comments').insert({ id, post_id: postId, author_id: me.id, text: clean });
+    if (error) return { ok: false, message: error.message };
+    await refresh();
     return { ok: true, message: 'Comment posted.', id };
   },
 
-  deleteComment(postId: string, commentId: string): ActionResult {
+  async deleteComment(postId: string, commentId: string): Promise<ActionResult> {
+    const sb = requireSupabase();
+    void postId;
     const me = sessionUser(state);
     if (!me) return { ok: false, message: 'Please sign in first.' };
-    let removed = false;
-    mutate((s) => {
-      const p = getPost(s, postId);
-      if (!p) return;
-      const i = p.comments.findIndex((c) => c.id === commentId && c.authorId === me.id);
-      if (i >= 0) {
-        p.comments.splice(i, 1);
-        removed = true;
-      }
-    });
-    return removed
-      ? { ok: true, message: 'Comment deleted.' }
-      : { ok: false, message: 'You can only delete your own comments.' };
+    const { error } = await sb.from('comments').delete().eq('id', commentId).eq('author_id', me.id);
+    if (error) return { ok: false, message: error.message };
+    await refresh();
+    return { ok: true, message: 'Comment deleted.' };
   },
 
-  toggleFollow(userId: string): ActionResult & { following?: boolean } {
+  async toggleFollow(userId: string): Promise<ActionResult & { following?: boolean }> {
+    const sb = requireSupabase();
     const me = sessionUser(state);
     if (!me) return { ok: false, message: 'Create a free account to follow creators.' };
     if (userId === me.id) return { ok: false, message: "You can't follow yourself." };
     if (!getUser(state, userId)) return { ok: false, message: 'User not found.' };
-    let following = false;
-    mutate((s) => {
-      const arr = (s.follows[me.id] = s.follows[me.id] ?? []);
-      const i = arr.indexOf(userId);
-      if (i >= 0) arr.splice(i, 1);
-      else {
-        arr.push(userId);
-        following = true;
-        addPoints(s, me.id, POINTS.follow, `Following ${getUser(s, userId)?.displayName ?? 'a creator'} · +${POINTS.follow} Glow Point`, undefined, true);
-        pushNotification(s, userId, {
-          kind: 'follower',
-          text: `${me.displayName} (@${me.username}) started following you.`,
-          link: `/u/${me.username}`,
-        });
-      }
-    });
-    return { ok: true, message: following ? 'Following.' : 'Unfollowed.', following };
+    const following = (state.follows[me.id] ?? []).includes(userId);
+    if (following) {
+      await sb.from('follows').delete().eq('follower_id', me.id).eq('followee_id', userId);
+    } else {
+      const { error } = await sb.from('follows').insert({ follower_id: me.id, followee_id: userId });
+      if (error) return { ok: false, message: error.message };
+    }
+    await refresh();
+    return { ok: true, message: following ? 'Unfollowed.' : 'Following.', following: !following };
   },
 
   /* ── battles & voting ── */
 
-  vote(battleId: string, side: 'a' | 'b'): ActionResult {
+  async vote(battleId: string, side: 'a' | 'b'): Promise<ActionResult> {
+    const sb = requireSupabase();
     const me = sessionUser(state);
     if (!me) return { ok: false, message: 'Create a free account to vote.' };
     const b = getBattle(state, battleId);
     if (!b) return { ok: false, message: 'Battle not found.' };
-    if (!isBattleLive(b)) return { ok: false, message: 'Voting has ended for this battle.' };
-    const tally = state.tallies[battleId];
-    if (!tally) return { ok: false, message: 'Vote storage missing for this battle.' };
-    if (tally.voters.includes(me.id))
-      return { ok: false, message: 'You already voted in this battle — one vote per account.' };
-    mutate((s) => {
-      const t = s.tallies[battleId];
-      if (!t || t.voters.includes(me.id)) return;
-      if (side === 'a') t.a += 1;
-      else t.b += 1;
-      t.voters.push(me.id);
-      addPoints(s, me.id, POINTS.vote, `Vote counted · +${POINTS.vote} Glow Points`, `/battles/${battleId}`, true);
-      // Top-voter crown: whoever holds #1 earns the badge
-      const ranked = topVoters(s, 1);
-      if (ranked.length > 0 && ranked[0].user.id === me.id) {
-        const u = getUser(s, me.id);
-        if (u && !u.badges.includes('top-voter')) {
-          u.badges.push('top-voter');
-          pushNotification(s, me.id, {
-            kind: 'level-up',
-            text: 'You are the #1 voter on Snap Glow! The Top Voter crown is yours.',
-            link: '/leaderboards/top-voters',
-          });
-        }
-      }
-    });
+    if (b.status !== 'live') return { ok: false, message: 'Voting has ended for this battle.' };
+    const { error } = await sb.rpc('cast_vote', { p_battle: battleId, p_side: side });
+    if (error) return { ok: false, message: error.message };
+    await refresh();
+    void syncMyBadges();
     return { ok: true, message: 'Vote counted!' };
   },
 
-  /* ── creation ── */
-
-  publishCard(input: PublishInput): ActionResult {
+  async addBattleComment(battleId: string, text: string): Promise<ActionResult> {
+    const sb = requireSupabase();
     const me = sessionUser(state);
-    if (!me) return { ok: false, message: 'Create a free account to publish cards.' };
-    const title = input.title.trim();
-    if (title.length < 2) return { ok: false, message: 'Give your card a title (2+ characters).' };
-    if (title.length > 40) return { ok: false, message: 'Keep the title under 40 characters.' };
-    const streak = Math.max(0, Math.min(99999, Math.floor(input.streak) || 0));
-    const challengeDay = input.challengeDay && input.challengeDay === todayKey() ? input.challengeDay : undefined;
-    let cardId = '';
-    mutate((s) => {
-      cardId = uid('card');
-      const card: FlexCardData = {
-        id: cardId,
-        ownerId: me.id,
-        title,
-        caption: input.caption.trim().slice(0, 140),
-        template: input.template,
-        imageKind: input.imageKind,
-        imageDataUrl: input.imageDataUrl,
-        artSeed: `${cardId}-seed`,
-        streak,
-        streakLabel: input.streakLabel.trim().slice(0, 60),
-        badges: input.badges.slice(0, 6),
-        likes: [],
-        challengeDay,
-        createdAt: new Date().toISOString(),
-        published: true,
-      };
-      s.cards.unshift(card);
-      s.posts.unshift({
-        id: uid('post'),
-        authorId: me.id,
-        cardId,
-        caption: input.caption.trim().slice(0, 280) || `Just dropped “${title}” — made for my Snapchat Story.`,
-        tags: [],
-        likes: [],
-        comments: [],
-        shares: 0,
-        createdAt: new Date().toISOString(),
-      });
-      const bonus = challengeDay ? POINTS.challengeBonus : 0;
-      addPoints(
-        s,
-        me.id,
-        POINTS.createCard + bonus,
-        challengeDay
-          ? `Card published + Daily Challenge bonus · +${POINTS.createCard + bonus} Glow Points`
-          : `Card published · +${POINTS.createCard} Glow Points`,
-        `/cards/${cardId}`,
-        true,
-      );
-    });
-    if (!state.storageOk)
-      return { ok: true, message: 'Published for this session — browser storage is full, so it may not survive a reload.', id: cardId };
-    return { ok: true, message: 'Card published!', id: cardId };
+    if (!me) return { ok: false, message: 'Create a free account to comment.' };
+    const clean = text.trim();
+    if (!clean) return { ok: false, message: 'Write something first.' };
+    if (clean.length > 500) return { ok: false, message: 'Comments are limited to 500 characters.' };
+    const id = uid('bcm');
+    const { error } = await sb.from('battle_comments').insert({ id, battle_id: battleId, author_id: me.id, text: clean });
+    if (error) return { ok: false, message: error.message };
+    await refresh();
+    return { ok: true, message: 'Comment posted.', id };
   },
 
-  createPost(caption: string, cardId?: string): ActionResult {
+  async deleteBattleComment(battleId: string, commentId: string): Promise<ActionResult> {
+    const sb = requireSupabase();
+    void battleId;
     const me = sessionUser(state);
-    if (!me) return { ok: false, message: 'Create a free account to post.' };
-    const clean = caption.trim();
-    if (!clean) return { ok: false, message: 'Write a caption first.' };
-    if (clean.length > 280) return { ok: false, message: 'Keep captions under 280 characters.' };
-    let id = '';
-    mutate((s) => {
-      id = uid('post');
-      s.posts.unshift({
-        id,
-        authorId: me.id,
-        cardId,
-        caption: clean,
-        tags: Array.from(clean.matchAll(/#(\w+)/g)).map((m) => m[1].toLowerCase()),
-        likes: [],
-        comments: [],
-        shares: 0,
-        createdAt: new Date().toISOString(),
-      });
-      addPoints(s, me.id, POINTS.createPost, `Post published · +${POINTS.createPost} Glow Points`, `/posts/${id}`, true);
-    });
-    return { ok: true, message: 'Posted!', id };
+    if (!me) return { ok: false, message: 'Please sign in first.' };
+    const { error } = await sb.from('battle_comments').delete().eq('id', commentId).eq('author_id', me.id);
+    if (error) return { ok: false, message: error.message };
+    await refresh();
+    return { ok: true, message: 'Comment deleted.' };
   },
 
-  createBattle(title: string, cardAId: string, cardBId: string, hours = 12): ActionResult {
+  async toggleBattleLike(battleId: string): Promise<ActionResult & { liked?: boolean }> {
+    const sb = requireSupabase();
+    const me = sessionUser(state);
+    if (!me) return { ok: false, message: 'Create a free account to like battles.' };
+    const { data } = await sb.from('battle_likes').select('user_id').eq('battle_id', battleId).eq('user_id', me.id);
+    const liked = (data ?? []).length > 0;
+    if (liked) {
+      await sb.from('battle_likes').delete().eq('battle_id', battleId).eq('user_id', me.id);
+    } else {
+      const { error } = await sb.from('battle_likes').insert({ battle_id: battleId, user_id: me.id });
+      if (error) return { ok: false, message: error.message };
+    }
+    await refresh();
+    return { ok: true, message: liked ? 'Like removed.' : 'Liked.', liked: !liked };
+  },
+
+  /** Instant battle: both cards known, goes live immediately. */
+  async createBattle(title: string, cardAId: string, cardBId: string, hours = 12): Promise<ActionResult> {
+    const sb = requireSupabase();
     const me = sessionUser(state);
     if (!me) return { ok: false, message: 'Create a free account to create battles.' };
     const clean = title.trim();
@@ -841,85 +1108,348 @@ export const api = {
     const c = getCard(state, cardBId);
     if (!a || !c || !a.published || !c.published)
       return { ok: false, message: 'Both contestants must be published cards.' };
-    const dur = Math.min(72, Math.max(1, hours || 12));
-    const nowT = Date.now();
-    let id = '';
-    mutate((s) => {
-      id = uid('battle');
-      s.battles.unshift({
-        id,
-        title: clean.slice(0, 60),
-        cardAId,
-        cardBId,
-        createdBy: me.id,
-        createdAt: new Date(nowT).toISOString(),
-        endsAt: new Date(nowT + dur * 3600 * 1000).toISOString(),
-      });
-      s.tallies[id] = { a: 0, b: 0, voters: [] };
-      addPoints(s, me.id, POINTS.battleCreate, `Battle created · +${POINTS.battleCreate} Glow Points`, `/battles/${id}`, true);
+    const dur = Math.min(72, Math.max(1, Math.round(hours) || 12));
+    const id = uid('battle');
+    const { error } = await sb.from('battles').insert({
+      id,
+      title: clean.slice(0, 60),
+      created_by: me.id,
+      card_a_id: cardAId,
+      card_b_id: cardBId,
+      status: 'live',
+      duration_hours: dur,
+      ends_at: new Date(Date.now() + dur * 3600 * 1000).toISOString(),
     });
+    if (error) return { ok: false, message: error.message };
+    await refresh();
     return { ok: true, message: `Battle created — voting runs ${dur}h. Share the vote links!`, id };
+  },
+
+  /** Challenge: my card vs an invited (or open) opponent. Stays pending until accepted. */
+  async createChallenge(
+    title: string,
+    myCardId: string,
+    opponentUsername: string | null,
+    hours = 12,
+  ): Promise<ActionResult> {
+    const sb = requireSupabase();
+    const me = sessionUser(state);
+    if (!me) return { ok: false, message: 'Create a free account to challenge creators.' };
+    const clean = title.trim();
+    if (clean.length < 4) return { ok: false, message: 'Give the challenge a title (4+ characters).' };
+    const card = getCard(state, myCardId);
+    if (!card || card.ownerId !== me.id || !card.published)
+      return { ok: false, message: 'Pick one of your own published cards.' };
+    let opponentId: string | null = null;
+    if (opponentUsername) {
+      const opponent = getUserByUsername(state, opponentUsername);
+      if (!opponent) return { ok: false, message: 'No creator with that username — check the spelling.' };
+      if (opponent.id === me.id) return { ok: false, message: "You can't challenge yourself." };
+      opponentId = opponent.id;
+    }
+    const dur = Math.min(72, Math.max(1, Math.round(hours) || 12));
+    const id = uid('battle');
+    const { error } = await sb.from('battles').insert({
+      id,
+      title: clean.slice(0, 60),
+      created_by: me.id,
+      card_a_id: myCardId,
+      card_b_id: null,
+      opponent_id: opponentId,
+      status: 'pending',
+      duration_hours: dur,
+      ends_at: null,
+    });
+    if (error) return { ok: false, message: error.message };
+    await refresh();
+    return {
+      ok: true,
+      message: opponentId
+        ? 'Challenge sent! Share the link so your opponent accepts.'
+        : 'Open challenge created — share the link, anyone can accept!',
+      id,
+    };
+  },
+
+  async acceptChallenge(battleId: string, myCardId: string): Promise<ActionResult> {
+    const sb = requireSupabase();
+    const me = sessionUser(state);
+    if (!me) return { ok: false, message: 'Create a free account to accept challenges.' };
+    const card = getCard(state, myCardId);
+    if (!card || card.ownerId !== me.id || !card.published)
+      return { ok: false, message: 'Pick one of your own published cards.' };
+    const { error } = await sb.rpc('accept_challenge', { p_battle: battleId, p_card: myCardId });
+    if (error) return { ok: false, message: error.message };
+    await refresh();
+    return { ok: true, message: 'Challenge accepted — the battle is LIVE! Share your vote link.' };
+  },
+
+  async rejectChallenge(battleId: string): Promise<ActionResult> {
+    const sb = requireSupabase();
+    const me = sessionUser(state);
+    if (!me) return { ok: false, message: 'Please sign in first.' };
+    const { error } = await sb.rpc('reject_challenge', { p_battle: battleId });
+    if (error) return { ok: false, message: error.message };
+    await refresh();
+    return { ok: true, message: 'Challenge rejected.' };
+  },
+
+  async cancelBattle(battleId: string): Promise<ActionResult> {
+    const sb = requireSupabase();
+    const me = sessionUser(state);
+    if (!me) return { ok: false, message: 'Please sign in first.' };
+    const { error } = await sb.rpc('cancel_battle', { p_battle: battleId });
+    if (error) return { ok: false, message: error.message };
+    await refresh();
+    return { ok: true, message: 'Challenge cancelled.' };
+  },
+
+  /* ── creation ── */
+
+  async publishCard(input: PublishInput): Promise<ActionResult> {
+    const sb = requireSupabase();
+    const me = sessionUser(state);
+    if (!me) return { ok: false, message: 'Create a free account to publish cards.' };
+    const title = input.title.trim();
+    if (title.length < 2) return { ok: false, message: 'Give your card a title (2+ characters).' };
+    if (title.length > 40) return { ok: false, message: 'Keep the title under 40 characters.' };
+    const streak = Math.max(0, Math.min(99999, Math.floor(input.streak) || 0));
+    const today = new Date().toISOString().slice(0, 10);
+    const challengeDay = input.challengeDay === today ? input.challengeDay : null;
+    const cardId = uid('card');
+
+    // upload the photo to storage when present
+    let imagePath: string | null = null;
+    if (input.imageKind === 'upload' && input.imageDataUrl) {
+      const blob = dataUrlToBlob(input.imageDataUrl);
+      const path = `${me.id}/${cardId}.jpg`;
+      const { error: upErr } = await sb.storage
+        .from('card-images')
+        .upload(path, blob, { contentType: 'image/jpeg', upsert: true });
+      if (upErr) return { ok: false, message: `Photo upload failed: ${upErr.message}` };
+      imagePath = path;
+    }
+
+    const { error } = await sb.from('cards').insert({
+      id: cardId,
+      owner_id: me.id,
+      title,
+      caption: input.caption.trim().slice(0, 140),
+      template: input.template,
+      image_kind: input.imageKind,
+      image_path: imagePath,
+      art_seed: Math.floor(Math.random() * 1e9),
+      streak,
+      streak_label: input.streakLabel.trim().slice(0, 60),
+      badges: input.badges.slice(0, 6),
+      challenge_day: challengeDay,
+      published: true,
+    });
+    if (error) return { ok: false, message: error.message };
+
+    const postId = uid('post');
+    await sb.from('posts').insert({
+      id: postId,
+      author_id: me.id,
+      card_id: cardId,
+      caption: input.caption.trim().slice(0, 280) || `Just dropped “${title}” — made for my Snapchat Story.`,
+      tags: [],
+    });
+    await refresh();
+    void syncMyBadges();
+    return { ok: true, message: 'Card published!', id: cardId };
+  },
+
+  async createPost(caption: string, cardId?: string): Promise<ActionResult> {
+    const sb = requireSupabase();
+    const me = sessionUser(state);
+    if (!me) return { ok: false, message: 'Create a free account to post.' };
+    const clean = caption.trim();
+    if (!clean) return { ok: false, message: 'Write a caption first.' };
+    if (clean.length > 280) return { ok: false, message: 'Keep captions under 280 characters.' };
+    const id = uid('post');
+    const { error } = await sb.from('posts').insert({
+      id,
+      author_id: me.id,
+      card_id: cardId ?? null,
+      caption: clean,
+      tags: Array.from(clean.matchAll(/#(\w+)/g)).map((m) => m[1].toLowerCase()),
+    });
+    if (error) return { ok: false, message: error.message };
+    await refresh();
+    return { ok: true, message: 'Posted!', id };
   },
 
   /* ── reports / sharing / notifications ── */
 
-  reportContent(targetType: Report['targetType'], targetId: string, reason: string, details: string): ActionResult {
+  async reportContent(
+    targetType: Report['targetType'],
+    targetId: string,
+    reason: string,
+    details: string,
+  ): Promise<ActionResult> {
+    const sb = requireSupabase();
     const me = sessionUser(state);
+    if (!me) return { ok: false, message: 'Create a free account to report content.' };
     const clean = details.trim();
     if (!reason) return { ok: false, message: 'Choose a reason.' };
     if (clean.length > 500) return { ok: false, message: 'Keep details under 500 characters.' };
-    mutate((s) => {
-      s.reports.push({
-        id: uid('report'),
-        targetType,
-        targetId,
-        reason,
-        details: clean,
-        reporterId: me ? me.id : null,
-        createdAt: new Date().toISOString(),
-      });
+    const { error } = await sb.from('reports').insert({
+      id: uid('report'),
+      target_type: targetType,
+      target_id: targetId,
+      reason,
+      details: clean,
+      reporter_id: me.id,
     });
-    return { ok: true, message: 'Report saved. Our moderation queue reviews reports before the public launch.' };
+    if (error) return { ok: false, message: error.message };
+    return { ok: true, message: 'Report sent — moderators will review it. Thank you!' };
   },
 
   sharePost(postId: string): string {
-    mutate((s) => {
-      const p = getPost(s, postId);
-      if (p) p.shares += 1;
-    });
     return `${siteUrl()}/posts/${postId}`;
   },
 
   markAllNotificationsRead() {
-    mutate((s) => {
-      for (const n of s.notifications) n.read = true;
-      const me = s.sessionUserId;
-      if (!me) return;
-      const { list } = getNotifications(s, me);
-      for (const n of list) {
-        if (n.dismissKey && !s.dismissed.includes(n.dismissKey)) s.dismissed.push(n.dismissKey);
-      }
-    });
+    const me = state.sessionUserId;
+    if (!me) return;
+    for (const n of state.notifications) n.read = true;
+    const { list } = getNotifications(state, me);
+    for (const n of list) {
+      if (n.dismissKey && !state.dismissed.includes(n.dismissKey)) state.dismissed.push(n.dismissKey);
+    }
+    saveLocalNotifs(me);
+    version += 1;
+    listeners.forEach((l) => l());
   },
 
   resetAll() {
-    const s = emptyState();
-    mutate((st) => {
-      st.users = s.users;
-      st.cards = s.cards;
-      st.posts = s.posts;
-      st.battles = s.battles;
-      st.tallies = s.tallies;
-      st.follows = s.follows;
-      st.reports = s.reports;
-      st.notifications = s.notifications;
-      st.dismissed = s.dismissed;
-      st.winAwarded = s.winAwarded;
-      st.sessionUserId = s.sessionUserId;
-      st.storageOk = true;
+    const me = state.sessionUserId;
+    if (me) {
+      localStorage.removeItem(notifKey(me));
+      localStorage.removeItem(dismissedKey(me));
+      state.notifications = [];
+      state.dismissed = [];
+    }
+    refresh();
+  },
+
+  /* ── admin (RLS-enforced server-side) ── */
+
+  async adminListReports(): Promise<Report[]> {
+    const sb = requireSupabase();
+    const { data } = await sb.from('reports').select('*').order('created_at', { ascending: false }).limit(200);
+    return (data ?? []).map((r: {
+      id: string; target_type: Report['targetType']; target_id: string; reason: string;
+      details: string; reporter_id: string | null; created_at: string; status: Report['status'];
+    }) => ({
+      id: r.id,
+      targetType: r.target_type,
+      targetId: r.target_id,
+      reason: r.reason,
+      details: r.details,
+      reporterId: r.reporter_id,
+      createdAt: r.created_at,
+      status: r.status,
+    }));
+  },
+
+  async adminSetReportStatus(reportId: string, status: Report['status']): Promise<ActionResult> {
+    const sb = requireSupabase();
+    const me = sessionUser(state);
+    const { error } = await sb.from('reports').update({ status, actioned_by: me?.id ?? null }).eq('id', reportId);
+    if (error) return { ok: false, message: error.message };
+    await refresh();
+    return { ok: true, message: `Report ${status}.` };
+  },
+
+  async adminSetSuspended(userId: string, suspended: boolean): Promise<ActionResult> {
+    const sb = requireSupabase();
+    const { error } = await sb.from('profiles').update({ is_suspended: suspended }).eq('id', userId);
+    if (error) return { ok: false, message: error.message };
+    await refresh();
+    return { ok: true, message: suspended ? 'Account suspended.' : 'Account restored.' };
+  },
+
+  async adminSetDemo(userId: string, isDemo: boolean): Promise<ActionResult> {
+    const sb = requireSupabase();
+    const { error } = await sb.from('profiles').update({ is_demo: isDemo }).eq('id', userId);
+    if (error) return { ok: false, message: error.message };
+    await refresh();
+    return { ok: true, message: isDemo ? 'Marked as demo data.' : 'Demo flag removed.' };
+  },
+
+  async adminDeleteCard(cardId: string): Promise<ActionResult> {
+    const sb = requireSupabase();
+    const { error } = await sb.from('cards').delete().eq('id', cardId);
+    if (error) return { ok: false, message: error.message };
+    await refresh();
+    return { ok: true, message: 'Card deleted.' };
+  },
+
+  async adminDeletePost(postId: string): Promise<ActionResult> {
+    const sb = requireSupabase();
+    const { error } = await sb.from('posts').delete().eq('id', postId);
+    if (error) return { ok: false, message: error.message };
+    await refresh();
+    return { ok: true, message: 'Post deleted.' };
+  },
+
+  async adminDeleteBattle(battleId: string): Promise<ActionResult> {
+    const sb = requireSupabase();
+    const { error } = await sb.from('battles').delete().eq('id', battleId);
+    if (error) return { ok: false, message: error.message };
+    await refresh();
+    return { ok: true, message: 'Battle deleted.' };
+  },
+
+  async adminFeature(userId: string, note = ''): Promise<ActionResult> {
+    const sb = requireSupabase();
+    const { error } = await sb.from('featured').upsert({ user_id: userId, note }, { onConflict: 'user_id' });
+    if (error) return { ok: false, message: error.message };
+    await refresh();
+    return { ok: true, message: 'Creator featured.' };
+  },
+
+  async adminUnfeature(userId: string): Promise<ActionResult> {
+    const sb = requireSupabase();
+    const { error } = await sb.from('featured').delete().eq('user_id', userId);
+    if (error) return { ok: false, message: error.message };
+    await refresh();
+    return { ok: true, message: 'Removed from featured.' };
+  },
+
+  async adminSetConfig(key: string, value: unknown): Promise<ActionResult> {
+    const sb = requireSupabase();
+    const me = sessionUser(state);
+    const { error } = await sb.from('app_config').upsert(
+      { key, value, updated_at: new Date().toISOString(), updated_by: me?.id ?? null },
+      { onConflict: 'key' },
+    );
+    if (error) return { ok: false, message: error.message };
+    return { ok: true, message: 'Configuration saved.' };
+  },
+
+  async adminAudit(action: string, target: string, details?: unknown): Promise<void> {
+    const sb = requireSupabase();
+    const me = sessionUser(state);
+    await sb.from('audit_log').insert({
+      actor: me?.id ?? null,
+      action,
+      target,
+      details: (details ?? null) as never,
     });
   },
 };
+
+function dataUrlToBlob(dataUrl: string): Blob {
+  const [head, body] = dataUrl.split(',');
+  const mime = /:(.*?);/.exec(head)?.[1] ?? 'image/jpeg';
+  const bin = atob(body);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new Blob([bytes], { type: mime });
+}
 
 export function siteUrl(): string {
   const env = (import.meta as unknown as { env?: Record<string, string> }).env;

@@ -45,10 +45,13 @@
 
 html {
   scroll-behavior: smooth;
+  /* hard stop on horizontal scroll (100vw marquees, dropdowns, wide grids) */
+  overflow-x: clip;
 }
 
 body {
   @apply font-body text-ink antialiased;
+  overflow-x: clip;
   background-color: var(--cream);
   /* faint halftone dot field over warm cream */
   background-image: radial-gradient(rgba(20, 20, 20, 0.055) 1.2px, transparent 1.3px);

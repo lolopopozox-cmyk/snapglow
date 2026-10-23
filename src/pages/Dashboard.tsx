@@ -106,6 +106,7 @@ export default function Dashboard() {
   const [editOpen, setEditOpen] = useState(false);
   const [editName, setEditName] = useState('');
   const [editBio, setEditBio] = useState('');
+  const [editAvatar, setEditAvatar] = useState<string | null>(null);
   const [postCaption, setPostCaption] = useState('');
   const [postCardId, setPostCardId] = useState('');
 
@@ -133,7 +134,7 @@ export default function Dashboard() {
   const myPosts = sg.state.posts.filter((p) => p.authorId === me.id);
   const myBattles = sg.state.battles.filter((b) => {
     const a = getCard(sg.state, b.cardAId);
-    const c = getCard(sg.state, b.cardBId);
+    const c = b.cardBId ? getCard(sg.state, b.cardBId) : undefined;
     return a?.ownerId === me.id || c?.ownerId === me.id;
   });
   const achievements = computeAchievements(sg.state, me.id);
@@ -141,17 +142,18 @@ export default function Dashboard() {
   const openEditor = () => {
     setEditName(me.displayName);
     setEditBio(me.bio);
+    setEditAvatar(me.avatar ?? null);
     setEditOpen(true);
   };
 
-  const saveProfile = () => {
-    const res = sg.updateProfile({ displayName: editName, bio: editBio });
+  const saveProfile = async () => {
+    const res = await sg.updateProfile({ displayName: editName, bio: editBio, avatar: editAvatar });
     toast(res.message);
     if (res.ok) setEditOpen(false);
   };
 
-  const submitPost = () => {
-    const res = sg.createPost(postCaption, postCardId || undefined);
+  const submitPost = async () => {
+    const res = await sg.createPost(postCaption, postCardId || undefined);
     toast(res.message);
     if (res.ok) {
       setPostCaption('');
@@ -209,7 +211,7 @@ export default function Dashboard() {
 
       {/* header card */}
       <div className="card-surface flex flex-col gap-4 rounded-card p-6 sm:flex-row sm:items-center">
-        <Avatar name={me.displayName} hue={me.hue} size={72} ring />
+        <Avatar name={me.displayName} hue={me.hue} src={me.avatar} emoji={me.avatarEmoji} size={72} ring />
         <div className="flex-1">
           <p className="flex flex-wrap items-center gap-2 font-display text-2xl font-extrabold text-ink">
             {me.displayName} <LevelBadge points={me.points} />
@@ -354,7 +356,7 @@ export default function Dashboard() {
             <ul className="space-y-3">
               {myBattles.map((b) => {
                 const a = getCard(sg.state, b.cardAId);
-                const c = getCard(sg.state, b.cardBId);
+                const c = b.cardBId ? getCard(sg.state, b.cardBId) : undefined;
                 const aOwner = a ? getUser(sg.state, a.ownerId) : undefined;
                 const cOwner = c ? getUser(sg.state, c.ownerId) : undefined;
                 return (
@@ -370,7 +372,7 @@ export default function Dashboard() {
                         </span>
                       </span>
                       <span className="flex items-center gap-3">
-                        {battleStatus(b.id, b.cardAId, b.cardBId)}
+                        {battleStatus(b.id, b.cardAId, b.cardBId ?? '')}
                         <span className="text-sm font-extrabold text-brand-violet">View →</span>
                       </span>
                     </Link>
@@ -429,6 +431,61 @@ export default function Dashboard() {
       </div>
 
       <Modal open={editOpen} onClose={() => setEditOpen(false)} title="Edit profile">
+        <div className="mb-5 flex items-center gap-4">
+          <Avatar name={editName || me.displayName} hue={me.hue} src={editAvatar ?? undefined} emoji={me.avatarEmoji} size={64} ring />
+          <div>
+            <p className="text-sm font-extrabold text-ink">Profile photo</p>
+            <p className="text-xs font-semibold text-ink-mute">Shown on your profile, cards and Discover.</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <label className="inline-flex min-h-[40px] cursor-pointer items-center gap-1.5 rounded-full border border-line bg-white px-4 py-1.5 text-xs font-extrabold text-ink hover:border-brand-cyan">
+                Upload photo
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  className="sr-only"
+                  aria-label="Upload profile photo"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    if (file.size > 5 * 1024 * 1024) {
+                      toast('Pick an image under 5MB.');
+                      return;
+                    }
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                      const img = new Image();
+                      img.onload = () => {
+                        // downscale to 256px square-ish for fast profiles
+                        const size = 256;
+                        const canvas = document.createElement('canvas');
+                        canvas.width = size;
+                        canvas.height = size;
+                        const ctx = canvas.getContext('2d');
+                        if (!ctx) return;
+                        const scale = Math.max(size / img.width, size / img.height);
+                        const dw = img.width * scale;
+                        const dh = img.height * scale;
+                        ctx.drawImage(img, (size - dw) / 2, (size - dh) / 2, dw, dh);
+                        setEditAvatar(canvas.toDataURL('image/jpeg', 0.85));
+                      };
+                      img.src = String(reader.result);
+                    };
+                    reader.readAsDataURL(file);
+                  }}
+                />
+              </label>
+              {editAvatar && (
+                <button
+                  type="button"
+                  onClick={() => setEditAvatar(null)}
+                  className="inline-flex min-h-[40px] items-center rounded-full border border-line bg-white px-4 py-1.5 text-xs font-extrabold text-ink-mute hover:border-brand-pink hover:text-brand-pink"
+                >
+                  Remove
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
         <Field
           label="Display name"
           value={editName}

@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { Check, Flame } from 'lucide-react';
+import { Check, Flame, Swords } from 'lucide-react';
 import { getBattle, getCard, getUser, isBattleLive, sessionUser, useSnapGlow } from '../lib/store';
 import type { BattleTally, FlexCardData, User } from '../lib/types';
 import { handle } from '../lib/format';
@@ -22,22 +22,23 @@ function Contestant({ battleId, side, card, owner, tally, voted, ended, compact,
   const sg = useSnapGlow();
   const { toast } = useToast();
   const votes = side === 'a' ? tally.a : tally.b;
-  const lime = side === 'a';
+  const isA = side === 'a';
+  const total = tally.a + tally.b;
+  const pct = total > 0 ? Math.round((votes / total) * 100) : 0;
 
   const onVote = () => {
     if (!sessionUser(sg.state)) {
       toast('Create a free account to vote.');
       return;
     }
-    const res = sg.vote(battleId, side);
-    toast(res.message);
+    void sg.vote(battleId, side).then((res) => toast(res.message));
   };
 
   return (
-    <div className={`w-full ${compact ? 'max-w-[220px]' : 'max-w-sm'}`}>
+    <div className="flex w-full flex-col items-center">
       <div className="mb-2 flex items-center gap-2.5">
         <Link to={`/u/${owner.username}`} aria-label={`View ${owner.displayName}'s profile`}>
-          <Avatar name={owner.displayName} hue={owner.hue} size={compact ? 36 : 44} />
+          <Avatar name={owner.displayName} hue={owner.hue} src={owner.avatar} emoji={owner.avatarEmoji} size={compact ? 36 : 44} />
         </Link>
         <div className="min-w-0">
           <p className="flex flex-wrap items-center gap-1.5">
@@ -52,7 +53,7 @@ function Contestant({ battleId, side, card, owner, tally, voted, ended, compact,
         </div>
       </div>
 
-      <Link to={`/cards/${card.id}`} aria-label={`Open card “${card.title}”`}>
+      <Link to={`/cards/${card.id}`} aria-label={`Open card “${card.title}”`} className="w-full">
         <FlexCard
           card={card}
           owner={owner}
@@ -65,9 +66,21 @@ function Contestant({ battleId, side, card, owner, tally, voted, ended, compact,
         </p>
       )}
 
-      <p className={`mt-2 flex items-center justify-center gap-1.5 font-grotesk font-bold text-ink ${compact ? 'text-sm' : 'text-base'}`}>
-        <Flame size={compact ? 15 : 17} aria-hidden="true" className="text-brand-coral" /> {votes} {votes === 1 ? 'vote' : 'votes'}
-      </p>
+      {/* live share of votes */}
+      <div className="mt-3 w-full max-w-xs" aria-label={`${votes} votes (${pct}%)`}>
+        <div className="flex items-center justify-between text-xs font-extrabold text-ink-soft">
+          <span className="inline-flex items-center gap-1">
+            <Flame size={13} aria-hidden="true" className="text-brand-coral" /> {votes} {votes === 1 ? 'vote' : 'votes'}
+          </span>
+          <span>{pct}%</span>
+        </div>
+        <div className="mt-1 h-2.5 overflow-hidden rounded-full border-2 border-ink bg-white">
+          <div
+            className={`h-full transition-all ${isA ? 'bg-sun' : 'bg-brand-violet'}`}
+            style={{ width: `${total > 0 ? Math.max(4, pct) : 0}%` }}
+          />
+        </div>
+      </div>
 
       <button
         type="button"
@@ -76,25 +89,25 @@ function Contestant({ battleId, side, card, owner, tally, voted, ended, compact,
         aria-label={ended ? `Voting ended for ${owner.displayName}` : `Vote for ${owner.displayName}`}
         disabled={ended}
         title={ended ? 'Voting has ended for this battle' : `Vote for ${owner.displayName}`}
-        className={`mt-2 w-full rounded-full px-5 py-2.5 font-grotesk font-bold transition disabled:cursor-not-allowed disabled:opacity-60 ${
-          lime ? 'btn-cta' : 'btn-violet'
+        className={`mt-3 w-full max-w-xs rounded-full px-5 py-3 font-grotesk text-base font-bold transition disabled:cursor-not-allowed disabled:opacity-60 ${
+          isA ? 'btn-cta' : 'btn-violet'
         }`}
       >
-        {ended ? 'Voting ended' : voted ? 'Vote counted' : `Vote ${owner.displayName.split(' ')[0]}`}
+        {ended ? 'Voting ended' : voted ? '✓ Vote counted' : `Vote ${owner.displayName.split(' ')[0]}`}
       </button>
     </div>
   );
 }
 
 /**
- * Symmetrical head-to-head battle block.
- * Title is rendered by the hosting page; this only renders the matchup.
+ * Head-to-head battle block. Stacks vertically on phones, three columns
+ * from `sm` up. Title/status are rendered by the hosting page.
  */
 export function VersusBattle({ battleId, compact = false, highlightSide }: { battleId: string; compact?: boolean; highlightSide?: 'a' | 'b' }) {
   const sg = useSnapGlow();
   const battle = getBattle(sg.state, battleId);
   const cardA = battle ? getCard(sg.state, battle.cardAId) : undefined;
-  const cardB = battle ? getCard(sg.state, battle.cardBId) : undefined;
+  const cardB = battle?.cardBId ? getCard(sg.state, battle.cardBId) : undefined;
   const ownerA = cardA ? getUser(sg.state, cardA.ownerId) : undefined;
   const ownerB = cardB ? getUser(sg.state, cardB.ownerId) : undefined;
   const tally: BattleTally | undefined = sg.state.tallies[battleId];
@@ -121,22 +134,24 @@ export function VersusBattle({ battleId, compact = false, highlightSide }: { bat
         )}
       </div>
 
-      <div className="grid grid-cols-[1fr_auto_1fr] items-start gap-2 sm:gap-6">
-        <div className="flex justify-start">
+      {/* mobile: stacked with VS ribbon · ≥sm: side-by-side */}
+      <div className="grid items-start gap-6 sm:grid-cols-[1fr_auto_1fr] sm:gap-6">
+        <div className="flex justify-center sm:justify-start">
           <Contestant battleId={battleId} side="a" card={cardA} owner={ownerA} tally={tally} voted={voted} ended={ended} compact={compact} highlighted={highlightSide === 'a'} />
         </div>
-        <div className="flex flex-col items-center pt-16 sm:pt-24" aria-hidden="true">
-          <span className="grid h-16 w-16 place-items-center rounded-full border-2 border-ink bg-sun font-display text-base font-bold text-ink shadow-lift sm:h-20 sm:w-20 sm:text-lg">
-            VS
+        <div className="flex items-center justify-center sm:block" aria-hidden="true">
+          <span className="inline-grid h-16 w-16 place-items-center rounded-full border-2 border-ink bg-sun font-display text-base font-bold text-ink shadow-lift sm:mt-24 sm:h-20 sm:w-20 sm:text-lg">
+            <Swords className="sm:hidden" size={26} aria-hidden="true" />
+            <span className="hidden sm:inline">VS</span>
           </span>
         </div>
-        <div className="flex justify-end">
+        <div className="flex justify-center sm:justify-end">
           <Contestant battleId={battleId} side="b" card={cardB} owner={ownerB} tally={tally} voted={voted} ended={ended} compact={compact} highlighted={highlightSide === 'b'} />
         </div>
       </div>
 
       <p className="mt-5 text-center text-xs font-semibold text-ink-mute">
-        One vote per account. Share the vote links below to rally your supporters.
+        One vote per account, verified server-side. Share the vote links below to rally your supporters.
       </p>
     </div>
   );

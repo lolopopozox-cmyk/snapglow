@@ -26,8 +26,8 @@ export default function PostPage() {
     .sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))
     .slice(0, 2);
 
-  const submitComment = () => {
-    const res = sg.addComment(post.id, comment);
+  const submitComment = async () => {
+    const res = await sg.addComment(post.id, comment);
     toast(res.message);
     if (res.ok) setComment('');
   };
@@ -114,7 +114,7 @@ export default function PostPage() {
                     {mine && (
                       <button
                         type="button"
-                        onClick={() => toast(sg.deleteComment(post.id, c.id).message)}
+                        onClick={() => void sg.deleteComment(post.id, c.id).then((r) => toast(r.message))}
                         aria-label="Delete your comment"
                         className="inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-xs font-extrabold text-ink-mute hover:bg-blush hover:text-brand-pink"
                       >

@@ -1,9 +1,12 @@
 import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft, Handshake, Timer, Trophy } from 'lucide-react';
+import { useState } from 'react';
+import { ArrowLeft, Download, Handshake, Timer, Trophy } from 'lucide-react';
 import { battleWinner, getBattle, getCard, getUser, isBattleLive, useSnapGlow } from '../lib/store';
 import { Seo } from '../components/Seo';
 import { Avatar, Countdown, CtaButton, EmptyState, PageHeader } from '../components/ui';
 import { handle } from '../lib/format';
+import { downloadCardPng } from '../lib/renderCard';
+import { useToast } from '../components/Toast';
 import NotFound from './NotFound';
 
 function VoteBar({
@@ -53,6 +56,8 @@ function VoteBar({
 export default function BattleResults() {
   const { id } = useParams<{ id: string }>();
   const sg = useSnapGlow();
+  const { toast } = useToast();
+  const [savingCard, setSavingCard] = useState(false);
 
   const battle = id ? getBattle(sg.state, id) : undefined;
   if (!battle) return <NotFound />;
@@ -126,6 +131,43 @@ export default function BattleResults() {
             <p className="mt-2 text-lg font-semibold text-ink-soft">
               {Math.max(tally.a, tally.b)} votes to {Math.min(tally.a, tally.b)} — the crowd has spoken.
             </p>
+            <button
+              type="button"
+              disabled={savingCard}
+              onClick={async () => {
+                const champ = winner === 'a' ? ownerA : ownerB;
+                setSavingCard(true);
+                try {
+                  await downloadCardPng(
+                    {
+                      id: `victory-${battle.id}`,
+                      ownerId: champ.id,
+                      title: champ.displayName,
+                      caption: `🏆 Won “${battle.title}” ${Math.max(tally.a, tally.b)}–${Math.min(tally.a, tally.b)}`,
+                      template: 'champion-edition',
+                      imageKind: 'art',
+                      artSeed: battle.id,
+                      streak: 0,
+                      streakLabel: '',
+                      badges: ['crown', 'star'],
+                      likes: [],
+                      createdAt: new Date().toISOString(),
+                      published: false,
+                    },
+                    champ,
+                    'feed',
+                  );
+                  toast('Victory card downloaded — share it everywhere! 🏆');
+                } catch {
+                  toast('Could not render the victory card.');
+                } finally {
+                  setSavingCard(false);
+                }
+              }}
+              className="btn-violet mt-4 inline-flex min-h-[48px] items-center gap-2 rounded-full px-6 py-3 font-display text-base font-bold disabled:cursor-wait disabled:opacity-60"
+            >
+              <Download size={17} aria-hidden="true" /> {savingCard ? 'Rendering…' : 'Download victory card'}
+            </button>
           </>
         ) : (
           <>

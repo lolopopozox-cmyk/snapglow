@@ -571,18 +571,77 @@ export function computeAchievements(s: StoreState, userId: string, now = Date.no
   return defs.map(([id, label, blurb, unlocked]) => ({ id, label, blurb, unlocked }));
 }
 
-export type FeedFilter = 'newest' | 'trending' | 'popular';
+export type FeedFilter = 'foryou' | 'newest' | 'trending' | 'popular';
 
 export function feedPosts(s: StoreState, filter: FeedFilter): Post[] {
   const list = [...s.posts];
   const now = Date.now();
-  if (filter === 'newest') return list.sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
+  if (filter === 'newest' || filter === 'foryou') return list.sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
   if (filter === 'popular') return list.sort((a, b) => b.likes.length - a.likes.length);
   const score = (p: Post) => {
     const ageH = Math.max(1, (now - +new Date(p.createdAt)) / 3600000);
     return (p.likes.length * 2 + p.comments.length * 3 + p.shares) / Math.pow(ageH, 1.15);
   };
   return list.sort((a, b) => score(b) - score(a));
+}
+
+/* ── For You: a simple, transparent ranked mix ──────────────────
+   One feed blending posts, cards and live battles. Scoring:
+     engagement = likes×3 + comments×2 (+ votes×2 for battles)
+     freshness  = engagement / ageHours^0.6  (+2 brand-new bonus)
+     follows    = ×1.25 when you follow the creator
+   Explained inline so the ranking never feels arbitrary.          */
+
+export type ForYouItem =
+  | { kind: 'post'; id: string; score: number }
+  | { kind: 'card'; id: string; score: number }
+  | { kind: 'battle'; id: string; score: number };
+
+export function forYouFeed(s: StoreState, limit = 30): ForYouItem[] {
+  const now = Date.now();
+  const me = sessionUser(s);
+  const following = me ? (s.follows[me.id] ?? []) : [];
+  const items: ForYouItem[] = [];
+
+  for (const p of s.posts) {
+    const ageH = Math.max(1, (now - +new Date(p.createdAt)) / 3600000);
+    let score = (p.likes.length * 3 + p.comments.length * 2 + 2) / Math.pow(ageH, 0.6);
+    if (following.includes(p.authorId)) score *= 1.25;
+    items.push({ kind: 'post', id: p.id, score });
+  }
+  for (const c of s.cards) {
+    if (!c.published) continue;
+    const ageH = Math.max(1, (now - +new Date(c.createdAt)) / 3600000);
+    let score = (c.likes.length * 3 + 2) / Math.pow(ageH, 0.6);
+    if (following.includes(c.ownerId)) score *= 1.25;
+    items.push({ kind: 'card', id: c.id, score });
+  }
+  for (const b of s.battles) {
+    if (b.status !== 'live' || !b.cardBId) continue;
+    const t = s.tallies[b.id];
+    const votes = t ? t.a + t.b : 0;
+    const bComments = s.battleComments.filter((x) => x.battleId === b.id).length;
+    const ageH = Math.max(1, (now - +new Date(b.createdAt)) / 3600000);
+    const score = ((votes * 2 + bComments * 2 + 6) / Math.pow(ageH, 0.6)) * 1.2; // battles are hot content
+    items.push({ kind: 'battle', id: b.id, score });
+  }
+
+  // keep the mix diverse: no more than 2 of the same kind in a row
+  const sorted = items.sort((a, b) => b.score - a.score);
+  const out: ForYouItem[] = [];
+  let streak = 0;
+  let lastKind: ForYouItem['kind'] | null = null;
+  for (const it of sorted) {
+    if (out.length >= limit) break;
+    if (it.kind === lastKind && streak >= 2) continue;
+    if (it.kind === lastKind) streak += 1;
+    else {
+      lastKind = it.kind;
+      streak = 1;
+    }
+    out.push(it);
+  }
+  return out;
 }
 
 export function trendingCards(s: StoreState, limit = 8): FlexCardData[] {

@@ -1,10 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { KeyRound, LogIn, ShieldCheck, UserPlus } from 'lucide-react';
 import { Seo } from '../components/Seo';
 import { Avatar, CtaButton, Field, GhostButton, PageHeader, Tabs } from '../components/ui';
 import { useToast } from '../components/Toast';
-import { sessionUser, useSnapGlow } from '../lib/store';
+import { getUserByUsername, sessionUser, useSnapGlow } from '../lib/store';
 
 const USERNAME_RE = /^[a-z0-9_.]{3,20}$/;
 
@@ -37,6 +37,23 @@ function CreateForm() {
   const [hue, setHue] = useState(260);
   const [busy, setBusy] = useState(false);
   const [errors, setErrors] = useState<{ name?: string; username?: string; password?: string; form?: string }>({});
+  /** live username availability: idle | checking | free | taken */
+  const [avail, setAvail] = useState<'idle' | 'checking' | 'free' | 'taken'>('idle');
+
+  // Debounced availability check against the shared profiles (public data).
+  useEffect(() => {
+    const handle = username.trim().replace(/^@/, '').toLowerCase();
+    if (!handle || !USERNAME_RE.test(handle)) {
+      setAvail('idle');
+      return;
+    }
+    setAvail('checking');
+    const t = setTimeout(() => {
+      setAvail(getUserByUsername(sg.state, handle) ? 'taken' : 'free');
+    }, 350);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [username, sg.state.users]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -44,6 +61,7 @@ function CreateForm() {
     if (displayName.trim().length < 2) next.name = 'Please enter a display name (2+ characters).';
     if (!USERNAME_RE.test(username.trim().toLowerCase()))
       next.username = 'Usernames need 3–20 characters: lowercase letters, numbers, dots or underscores.';
+    else if (avail === 'taken') next.username = 'That username is taken — try another one.';
     if (password.length < 6) next.password = 'Choose a password with at least 6 characters.';
     if (next.name || next.username || next.password) {
       setErrors(next);
@@ -157,6 +175,19 @@ function CreateForm() {
             autoComplete="username"
             hint="3–20 characters: lowercase letters, numbers, dots or underscores"
           />
+          {avail === 'checking' && (
+            <p className="mt-1.5 text-sm font-bold text-ink-mute" aria-live="polite">Checking availability…</p>
+          )}
+          {avail === 'free' && (
+            <p className="mt-1.5 text-sm font-bold text-emerald-600" aria-live="polite">
+              ✓ @{username.trim().toLowerCase()} is available — it&apos;s yours!
+            </p>
+          )}
+          {avail === 'taken' && (
+            <p className="mt-1.5 text-sm font-bold text-brand-pink" aria-live="polite">
+              ✗ @{username.trim().toLowerCase()} is not available — try another one.
+            </p>
+          )}
           {errors.username && <p role="alert" className="mt-1.5 text-sm font-bold text-brand-pink">{errors.username}</p>}
         </div>
         <div>

@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom';
+import { Analytics } from '@vercel/analytics/react';
 import { ToastProvider } from './components/Toast';
 import { Header } from './components/Header';
 import { Footer } from './components/Footer';
@@ -61,6 +62,7 @@ export default function App() {
     <ToastProvider>
       <BrowserRouter>
         <ScrollToTop />
+        <Analytics />
         <Routes>
           <Route element={<SiteLayout />}>
             {/* 1  */}<Route index element={<Home />} />
